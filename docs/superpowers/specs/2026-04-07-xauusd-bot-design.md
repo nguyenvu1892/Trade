@@ -77,12 +77,14 @@ Buộc Bot phải liên tục ra quyết định thay vì tê liệt vĩnh cửu
 
 **Hàm Reward tổng thể:**
 ```
-R(t) = PnL(t)                     # +/- tùy thắng/thua sau khi đóng lệnh
+R(t) = PnL(t)                     # +/- tùy thắng/thua sau khi đóng lệnh (USD thực)
      − opportunity_cost(t)        # phạt bỏ lỡ cơ hội Oracle
      − holding_cost(t)            # phạt mỗi nến đứng yên
      + sharpe_bonus(episode)      # thưởng cuối episode nếu Sharpe Ratio > 1.0
-     − drawdown_penalty(t)        # phạt nếu drawdown vượt ngưỡng cho phép (vd: 15%)
+     − drawdown_penalty(t)        # phạt nặng nếu drawdown vượt 10% tài khoản ($20)
 ```
+
+Với $200 vốn và 0.01 lot XAUUSD, mỗi pip ≈ $0.01, mỗi $1 biến động giá ≈ $0.10 P&L. Ngưỡng drawdown tối đa cho phép là **$20 (10% tài khoản)**. Bot sẽ bị phạt rất nặng nếu chạm ngưỡng này trong một episode để buộc nó học cách bảo vệ vốn.
 
 **Support VRAM/Cloud:** Hỗ trợ gradient checkpointing, mixed-precision (fp16/bf16), và distributed training để tối ưu cho GPU server thuê.
 
@@ -104,6 +106,14 @@ R(t) = PnL(t)                     # +/- tùy thắng/thua sau khi đóng lệnh
 - **Data format:** HDF5 (`.h5`) cho dataset huấn luyện, CSV cho dữ liệu giá thô đầu vào.
 - **Timeframe data đầu vào:** Cần xác định trong bước tiếp theo (M1, M5, H1, D1 hoặc multi-timeframe).
 - **Actions:** 3 action rời rạc: `[0=Hold, 1=Buy, 2=Sell]`.
+
+### Capital & Execution Constraints (Đã chốt)
+- **Sàn giao dịch:** Exness — tài khoản Raw Spread.
+- **Vốn khởi điểm:** $200 USD.
+- **Lot size cố định:** `0.01 lot` (duy nhất, không scale-in, không martingale).
+- **Giá trị mỗi pip:** ~$0.01. Mỗi $1 biến động giá XAUUSD = $0.10 P&L.
+- **Max Drawdown cho phép:** $20 (10% tài khoản) — nếu vượt ngưỡng trong 1 episode, episode kết thúc sớm và Bot nhận penalty nặng.
+- **Lý do cố định lot 0.01:** Tránh rủi ro ruin toàn bộ tài khoản. Khi Bot đã được kiểm chứng (live profit ổn định), lot size mới được tăng lên trong các phiên bản tương lai.
 
 ---
 
