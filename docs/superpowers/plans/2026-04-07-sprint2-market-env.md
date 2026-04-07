@@ -402,16 +402,16 @@ class TestXAUUSDEnv:
         env._balance = 200.0
         pnl = env._calc_pnl(entry_price=1900.0, exit_price=1910.0,
                             direction=1, lot=0.01)
-        # $10 move × 0.01 lot = $0.10
-        assert abs(pnl - 0.10) < 0.01, f"PnL Buy kỳ vọng ~$0.10, nhận {pnl:.4f}"
+        # $10 move × 0.01 lot × 100 oz = $10.00
+        assert abs(pnl - 10.0) < 0.01, f"PnL Buy kỳ vọng ~$10.0, nhận {pnl:.4f}"
 
     def test_pnl_calculation_sell(self):
-        """Bán tại 1910, đóng tại 1900: profit = $0.10."""
+        """Bán tại 1910, đóng tại 1900: profit = $10.00."""
         env = _make_env()
         env.reset()
         pnl = env._calc_pnl(entry_price=1910.0, exit_price=1900.0,
                             direction=-1, lot=0.01)
-        assert abs(pnl - 0.10) < 0.01, f"PnL Sell kỳ vọng ~$0.10, nhận {pnl:.4f}"
+        assert abs(pnl - 10.0) < 0.01, f"PnL Sell kỳ vọng ~$10.0, nhận {pnl:.4f}"
 ```
 
 - [ ] **Chạy để verify FAIL:**
@@ -459,11 +459,13 @@ class XAUUSDEnv(gym.Env):
 
     def __init__(
         self,
-        features:          np.ndarray,   # 2D (T, F) hoặc 3D (N, W, F) float32
-        close_prices:      np.ndarray,   # shape (T,) hoặc (N,) — giá Close tuyệt đối USD
-        open_next_prices:  np.ndarray,   # shape (T,) hoặc (N,) — [FIX LOOKAHEAD]
-                                         # Giá Open nến kế tiếp — điểm thực tế khớp lệnh
-        oracle_labels:     np.ndarray,   # shape (T,) hoặc (N,) — nhãn Oracle [0,1,2]
+        h5_path:           str = None,           # [FIX OOM] Đường dẫn nạp dữ liệu lazy
+        start_idx:         int = 0,               # Index bắt đầu (danh cho rollout)
+        end_idx:           int = -1,              # Index kết thúc
+        features:          np.ndarray = None,   # 2D (T, F) (Dùng cho Unit Test)
+        close_prices:      np.ndarray = None,   
+        open_next_prices:  np.ndarray = None,   
+        oracle_labels:     np.ndarray = None,   
         window_size:       int   = 128,
         spread_pips:       int   = 25,
         lot_size:          float = 0.01,
@@ -471,28 +473,36 @@ class XAUUSDEnv(gym.Env):
         max_drawdown_usd:  float = 20.0,
     ):
         super().__init__()
+        
+        self.h5_path       = h5_path
+        self._start_idx    = start_idx
+        self._end_idx      = end_idx
 
-        # [FIX] Dual-mode: tự detect 2D vs 3D input
-        assert features.ndim in (2, 3), (
-            f"features phải là 2D (T,F) hoặc 3D (N,W,F), nhận: {features.shape}"
-        )
-        self._is_prewindowed = (features.ndim == 3)  # True nếu lấy HDF5
-        self._features       = features
-        self._close          = close_prices
-        self._open_next      = open_next_prices       # [FIX LOOKAHEAD]
-        self._oracle         = oracle_labels
+        import h5py
+        if h5_path is not None:
+            self._is_prewindowed = True
+            # Load metadata và 1D arrays vào RAM (rất nhỏ, ko bị OOM)
+            with h5py.File(h5_path, "r") as f:
+                n_features = f["X"].shape[2]
+                total_len  = f["X"].shape[0] if end_idx == -1 else end_idx
+                self._close     = f["close"][start_idx:total_len].astype(np.float32)
+                self._open_next = f["open_next"][start_idx:total_len].astype(np.float32)
+                self._oracle    = f["y"][start_idx:total_len]
+            self._features = None
+        else:
+            # Tham số fallback dành cho Unit Test 2D mode
+            assert features is not None and features.ndim == 2
+            self._is_prewindowed = False
+            self._features       = features
+            self._close          = close_prices
+            self._open_next      = open_next_prices       
+            self._oracle         = oracle_labels
+            n_features           = features.shape[1]
         self._window         = window_size
         self._spread_usd     = spread_pips * lot_size / 100.0
         self._lot            = lot_size
         self._init_balance   = initial_balance
         self._max_dd         = max_drawdown_usd
-
-        if self._is_prewindowed:
-            # 3D: (N_windows, W, F) — mỗi sample là 1 cửa sổ hoàn chỉnh
-            n_features = features.shape[2]
-        else:
-            # 2D: (T, F) — môi trường tự tạo window bằng slice
-            n_features = features.shape[1]
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
@@ -621,15 +631,18 @@ class XAUUSDEnv(gym.Env):
 
     def _get_obs(self) -> np.ndarray:
         """
-        [FIX DUAL-MODE]
-        - 3D pre-windowed (HDF5): trả là features[cursor] trực tiếp — (W, F)
-        - 2D raw            : slice features[cursor-W : cursor] — (W, F)
+        [FIX DUAL-MODE & OOM]
+        - Khởi tạo qua HDF5 (Lazy Load): mở file và đọc vị trí _cursor
+        - Khởi tạo qua 2D raw  (Memory) : slice features[cursor-W : cursor]
         """
-        if self._is_prewindowed:
-            return self._features[self._cursor].copy()          # 3D mode
+        if self.h5_path is not None:
+            import h5py
+            with h5py.File(self.h5_path, "r") as f:
+                # Phải cộng start_idx để map đúng worker chunk
+                return f["X"][self._start_idx + self._cursor].astype(np.float32)
         else:
             start = self._cursor - self._window
-            return self._features[start:self._cursor].copy()    # 2D mode
+            return self._features[start:self._cursor].copy()
 
     def _get_current_dow(self) -> int:
         """Ngày trong tuần (0=Mon, 4=Fri) — ước tính từ cursor."""
@@ -643,11 +656,12 @@ class XAUUSDEnv(gym.Env):
         lot:         float,
     ) -> float:
         """
-        XAUUSD 0.01 lot = 0.01 oz vàng.
-        PnL = price_diff_USD × lot_size
-        Ví dụ: entry 1900, exit 1910, long → $10 × 0.01 = $0.10
+        XAUUSD 1 lot chuẩn = 100 oz vàng.
+        PnL = price_diff_USD × lot_size × 100
+        Ví dụ: entry 1900, exit 1910, long → $10 × 0.01 × 100 = $10.00
         """
-        return (exit_price - entry_price) * direction * lot
+        contract_size = 100.0
+        return (exit_price - entry_price) * direction * lot * contract_size
 ```
 
 

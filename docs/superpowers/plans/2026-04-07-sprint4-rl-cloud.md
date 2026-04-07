@@ -104,16 +104,11 @@ def make_async_envs(
     """
     def _make_env_fn(offset: int):
         def _init():
-            with h5py.File(h5_path, "r") as f:
-                X_slice         = f["X"][offset:split_idx].astype(np.float32)
-                label_slice     = f["y"][offset:split_idx]
-                close_slice     = f["close"][offset:split_idx].astype(np.float32)
-                open_next_slice = f["open_next"][offset:split_idx].astype(np.float32) # [FIX LOOKAHEAD]
+            # [FIX OOM] Không copy numpy array vào RAM, truyền tham số h5_path cho Env tự Lazy Load
             return XAUUSDEnv(
-                features         = X_slice,
-                close_prices     = close_slice,
-                open_next_prices = open_next_slice, # [FIX]
-                oracle_labels    = label_slice,
+                h5_path          = h5_path,
+                start_idx        = offset,         # Bắt đầu từ offset của worker này
+                end_idx          = split_idx,      # Không vượt quá tập train
                 window_size      = window_size,
                 spread_pips      = 25,
                 lot_size         = 0.01,
@@ -206,17 +201,11 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
     from src.training.backtest import compute_metrics
 
     oos_start = split_idx + gap_bars
-    with h5py.File(h5_path, "r") as f:
-        X_oos         = f["X"][oos_start:].astype(np.float32)
-        y_oos         = f["y"][oos_start:]
-        close_oos     = f["close"][oos_start:].astype(np.float32)
-        open_next_oos = f["open_next"][oos_start:].astype(np.float32)  # [FIX LOOKAHEAD]
 
     env = XAUUSDEnv(
-        features         = X_oos,
-        close_prices     = close_oos,
-        open_next_prices = open_next_oos,   # [FIX]
-        oracle_labels    = y_oos,
+        h5_path          = h5_path,
+        start_idx        = oos_start,
+        end_idx          = n_total,
         window_size      = window_size,
         spread_pips      = 25,
         lot_size         = 0.01,

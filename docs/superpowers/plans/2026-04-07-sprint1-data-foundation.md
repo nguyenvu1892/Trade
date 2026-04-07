@@ -808,10 +808,11 @@ class DatasetBuilder:
 
     def build(
         self,
-        features:     pd.DataFrame,
-        labels:       pd.Series,
-        out_path:     Path,
-        close_prices: pd.Series,   # [CRITICAL FIX] Giá đóng gốc cho Simulator
+        features:         pd.DataFrame,
+        labels:           pd.Series,
+        out_path:         Path,
+        close_prices:     pd.Series,
+        open_next_prices: pd.Series,   # [CRITICAL FIX]
     ) -> None:
         """
         Tạo file HDF5 từ features, labels, và close_prices.
