@@ -529,9 +529,12 @@ class XAUUSDEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        # [FIX] 3D pre-windowed: cursor bắt đầu từ 0 (cửa sổ đầu tiên)
-        # 2D raw:             cursor bắt đầu từ window_size (đủ dữ liệu lịch sử)
-        self._cursor           = 0 if self._is_prewindowed else self._window
+        # [FIX GROUNDHOG] Randomize điểm bắt đầu mỗi khi reset
+        if self._is_prewindowed:
+            max_start = len(self._features) - 2000
+            self._cursor = np.random.randint(0, max(1, max_start))
+        else:
+            self._cursor = self._window
         self._balance          = self._init_balance
         self._peak_balance     = self._init_balance
         self._position_dir     = 0

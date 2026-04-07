@@ -304,7 +304,10 @@ def ppo_update(
                 ratio.clamp(1 - clip_eps, 1 + clip_eps) * flat_adv[b]
             ).mean()
 
-            vf_loss = F.mse_loss(value.squeeze(-1), flat_ret[b])
+            # [FIX GRADIENT EXPLOSION] value head là random => error đầu tiên rất cao
+            # MSE Loss sẽ bình phương error này, tạo ra gradient khổng lồ phá vỡ Policy head
+            # Dùng smooth_l1_loss (Huber Loss) để giới hạn penalty
+            vf_loss = F.smooth_l1_loss(value.squeeze(-1), flat_ret[b])
 
             # KL Anchor Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             with torch.no_grad():
@@ -527,7 +530,7 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger(__name__)
 
 
-def compute_metrics(daily_returns: np.ndarray) -> dict:
+def compute_metrics(daily_returns: np.ndarray, periods_per_year: int = 24192) -> dict:
     """
     TÃƒÂ­nh cÃƒÂ¡c chÃ¡Â»â€° sÃ¡Â»â€˜ tÃƒÂ i chÃƒÂ­nh tÃ¡Â»Â« mÃ¡ÂºÂ£ng daily returns.
 
@@ -551,12 +554,12 @@ def compute_metrics(daily_returns: np.ndarray) -> dict:
     std_r  = r.std()
 
     # Sharpe Ratio (annualized Ãƒâ€”Ã¢Ë†Å¡252 nÃ¡ÂºÂ¿u daily, Ãƒâ€”Ã¢Ë†Å¡(252Ãƒâ€”24Ãƒâ€”4) nÃ¡ÂºÂ¿u M15)
-    sharpe = (mean_r / std_r * np.sqrt(252)) if std_r > 0 else 0.0
+    sharpe = (mean_r / std_r * np.sqrt(periods_per_year)) if std_r > 0 else 0.0
 
     # Sortino Ratio (chÃ¡Â»â€° dÃƒÂ¹ng downside std)
     negative_r  = r[r < 0]
     down_std    = negative_r.std() if len(negative_r) > 0 else 0.0
-    sortino = (mean_r / down_std * np.sqrt(252)) if down_std > 0 else 0.0
+    sortino = (mean_r / down_std * np.sqrt(periods_per_year)) if down_std > 0 else 0.0
 
     # Max Drawdown
     cumulative = np.cumprod(1 + r)
