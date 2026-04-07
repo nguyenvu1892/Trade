@@ -217,7 +217,8 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
         spread_pips      = 25,
         lot_size         = 0.01,
         initial_balance  = 200.0,
-        max_drawdown_usd = 20.0, # [FIX EQUITY HOLE] Dừng sớm nếu âm 10% vốn (Luật Prop Firm), tránh chia cho Equity âm
+        max_drawdown_usd = 999999.0, # [FIX OOS BACKTEST] Đánh giá toàn cảnh
+        random_start     = False,    # [FIX GROUNDHOG OOS] Bắt nhịp từ điểm bắt đầu OOS
     )
     model.eval()
 
@@ -241,6 +242,7 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
     model.train()
     bar_returns = np.diff(equity_hist) / np.array(equity_hist[:-1])
     metrics = compute_metrics(bar_returns, positions=np.array(position_hist))
+    survival_rate = len(equity_hist) / float(n_test)
     return metrics["sharpe"]
 
 
@@ -723,9 +725,9 @@ echo "BC Checkpoint: $BC_CKPT"
 CONN=$(vastai ssh-url $INSTANCE_ID)
 SSH_HOST=$(echo $CONN | sed 's/ssh:\/\///')
 
-# 2. Rsync source code + data + BC checkpoint lÃƒÂªn instance
-echo "Uploading source code..."
-rsync -avz --exclude '.git' --exclude '__pycache__' \\
+# 2. Rsync source code + raw data lÃƒÂªn instance
+echo "Uploading source code and raw data..."
+rsync -avz --exclude '.git' --exclude '__pycache__' --exclude 'data/processed/*' \\
     -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \\
     ./ root@${SSH_HOST}:/workspace/
 
@@ -740,7 +742,11 @@ echo "Installing dependencies..."
 ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
     "cd /workspace && pip install -q -r requirements.txt"
 
-# 4. [FIX] Launch PPO training (Phase 2) Ã¢â‚¬â€ khÃƒÂ´ng phÃ¡ÂºÂ£i BC!
+# 4. Build Dataset và Launch PPO training
+echo "Building dataset in Vast.ai cloud..."
+ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
+    "cd /workspace && python src/data/build_dataset.py --m15 data/raw/XAUUSD_M15_*.csv"
+
 echo "Starting PPO RL training (Phase 2)..."
 ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
     "cd /workspace && nohup python src/training/train_rl.py \\

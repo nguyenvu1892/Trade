@@ -529,10 +529,13 @@ class XAUUSDEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        # [FIX GROUNDHOG] Randomize điểm bắt đầu mỗi khi reset
+        # [FIX GROUNDHOG OOS] Randomize điểm bắt đầu mỗi khi reset nếu train, tuần tự từ 0 nếu test
         if self._is_prewindowed:
-            max_start = len(self._features) - 2000
-            self._cursor = np.random.randint(0, max(1, max_start))
+            if self._random_start:
+                max_start = len(self._features) - 2000
+                self._cursor = np.random.randint(0, max(1, max_start))
+            else:
+                self._cursor = 0
         else:
             self._cursor = self._window
         self._balance          = self._init_balance
