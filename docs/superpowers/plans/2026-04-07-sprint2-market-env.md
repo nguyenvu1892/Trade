@@ -471,12 +471,14 @@ class XAUUSDEnv(gym.Env):
         lot_size:          float = 0.01,
         initial_balance:   float = 200.0,
         max_drawdown_usd:  float = 20.0,
+        random_start:      bool  = True,  # [FIX OOS RANDOM] Randomize cursor nếu train, tuần tự nếu test
     ):
         super().__init__()
         
         self.h5_path       = h5_path
         self._start_idx    = start_idx
         self._end_idx      = end_idx
+        self._random_start = random_start
 
         import h5py
         if h5_path is not None:

@@ -851,7 +851,7 @@ class DatasetBuilder:
         X = np.lib.stride_tricks.sliding_window_view(
             feat_array, window_shape=(win, n_features)
         )
-        X = X[:, 0, :, :]                  # shape: (n_windows, win, n_features)
+        X = X[1:, 0, :, :]                 # [FIX DIMENSION CLASH] Bỏ cửa sổ đầu tiên để X có độ dài khớp với y
         y = label_array[win:]              # nhãn của nến cuối mỗi cửa sổ
 
         # [FIX] Giá đóng của nến cuối (exit price)

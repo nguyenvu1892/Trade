@@ -197,8 +197,11 @@ class RunningMeanStd:
         """DÃƒÂ¹ng mean/var Ã„â€˜ÃƒÂ£ Ã¢â‚¬Å“freezeÃ¢â‚¬Â  (khÃƒÂ´ng gÃ¡Â»Â i update() trong hÃƒÂ m nÃƒÂ y)."""
         return ((x - self.mean) / (self.var ** 0.5 + 1e-8)).clamp(-10.0, 10.0)
 
-def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
-                 gap_bars=200):
+def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device, gap_bars=200):
+    model.eval()
+    oos_start = split_idx + gap_bars
+    n_test    = n_total - oos_start  # [FIX NAME ERROR] Khai báo n_test tính từ tổng trừ điểm bắt đầu
+    
     """
     Chay 1 episode duy nhat xuyen suot toan bo OOS den khi truncated = True.
 
