@@ -395,8 +395,11 @@ xauusd_env.py
 Môi trường giao dịch XAUUSD chuẩn Gymnasium.
 
 State  : Feature window (window_size × n_features) float32
+         Lấy từ features 2D shape (T, n_features) bằng cách slice:
+         features[cursor - window : cursor]
+
 Action : Discrete(3) — 0=Hold, 1=Buy, 2=Sell
-Reward : RewardCalculator (PnL + holding_cost + drawdown_penalty + opportunity_cost)
+Reward : RewardCalculator (PnL + holding_cost + drawdown_penalty)
 
 Constraints (Exness Raw, $200 vốn, 0.01 lot cố định):
   - Chỉ 1 vị thế tại 1 thời điểm
@@ -420,11 +423,11 @@ class XAUUSDEnv(gym.Env):
 
     def __init__(
         self,
-        features:         np.ndarray,   # shape (T, n_features) float32
-        close_prices:     np.ndarray,   # shape (T,)  — giá Close tuyệt đối USD
-        oracle_labels:    np.ndarray,   # shape (T,)  — nhãn Oracle [0,1,2]
+        features:         np.ndarray,   # shape (T, n_features) float32  ← 2D!
+        close_prices:     np.ndarray,   # shape (T,) — giá Close tuyệt đối USD
+        oracle_labels:    np.ndarray,   # shape (T,) — nhãn Oracle [0,1,2]
         window_size:      int   = 128,
-        spread_pips:      int   = 25,   # 25 = $0.25 cho 0.01 lot
+        spread_pips:      int   = 25,
         lot_size:         float = 0.01,
         initial_balance:  float = 200.0,
         max_drawdown_usd: float = 20.0,
@@ -455,28 +458,51 @@ class XAUUSDEnv(gym.Env):
             opportunity_cost_usd = 0.5,
         )
 
-        # State variables (khởi tạo trong reset())
+        # State variables — reset trong reset()
         self._cursor:           int   = window_size
         self._balance:          float = initial_balance
         self._peak_balance:     float = initial_balance
-        self._position_dir:     int   = 0     # 0=flat, 1=long, -1=s        # ── Xử lý Action ─────────────────────────────────────────────
+        self._position_dir:     int   = 0      # 0=flat, 1=long, -1=short
+        self._entry_price:      float = 0.0
+        self._consecutive_hold: int   = 0
+
+    # ── Gymnasium API ─────────────────────────────────────────────────
+
+    def reset(self, seed=None, options=None):
+        super().reset(seed=seed)
+        self._cursor           = self._window
+        self._balance          = self._init_balance
+        self._peak_balance     = self._init_balance
+        self._position_dir     = 0
+        self._entry_price      = 0.0
+        self._consecutive_hold = 0
+        return self._get_obs(), {}
+
+    def step(self, action: int):
+        # [FIX] Lấy giá và oracle — phải định nghĩa trước khi dùng
+        current_price = float(self._close[self._cursor])
+        oracle_action = int(self._oracle[self._cursor])
+        reward        = 0.0
+        terminated    = False
+
+        # ── Xử lý Action ──────────────────────────────────────────────
         if self._position_dir == 0:
             # Flat: có thể mở lệnh mới
             if action == 1:   # Buy
-                commission = self._reward_calc.on_open_commission()
-                self._balance += commission
-                self._position_dir = 1
-                self._entry_price  = current_price + self._spread_usd
+                commission             = self._reward_calc.on_open_commission()
+                self._balance         += commission
+                self._position_dir     = 1
+                self._entry_price      = current_price + self._spread_usd
                 self._consecutive_hold = 0
-                reward = commission
+                reward                 = commission
             elif action == 2:  # Sell
-                commission = self._reward_calc.on_open_commission()
-                self._balance += commission
-                self._position_dir = -1
-                self._entry_price  = current_price - self._spread_usd
+                commission             = self._reward_calc.on_open_commission()
+                self._balance         += commission
+                self._position_dir     = -1
+                self._entry_price      = current_price - self._spread_usd
                 self._consecutive_hold = 0
-                reward = commission
-            else:  # Hold
+                reward                 = commission
+            else:  # Hold khi Flat — phạt đứng im
                 self._consecutive_hold += 1
                 reward = self._reward_calc.on_hold(
                     self._consecutive_hold,
@@ -489,64 +515,47 @@ class XAUUSDEnv(gym.Env):
                 (self._position_dir == 1  and action == 2) or  # Long + Sell
                 (self._position_dir == -1 and action == 1)     # Short + Buy
             )
-            is_close = (action == 0)  # Hold = đóng lệnh (tra quy ước)
+            is_close = (action == 0)  # Hold = đóng lệnh
 
             if is_close or is_reversal:
                 # ── Đóng lệnh hiện tại ───────────────────────────────
-                pnl = self._calc_pnl(self._entry_price, current_price,
-                                     self._position_dir, self._lot)
-                self._balance                 += pnl
-                self._peak_balance             = max(self._peak_balance, self._balance)
-                reward                         = self._reward_calc.on_close(
+                pnl = self._calc_pnl(
+                    self._entry_price, current_price,
+                    self._position_dir, self._lot
+                )
+                self._balance         += pnl
+                self._peak_balance     = max(self._peak_balance, self._balance)
+                reward                 = self._reward_calc.on_close(
                     pnl, self._peak_balance, self._balance
                 )
-                self._position_dir             = 0
-                self._consecutive_hold         = 0
+                self._position_dir     = 0
+                self._consecutive_hold = 0
 
                 if is_reversal:
-                    # ── Mở ngay lệnh ngược chiều trong cùng 1 step [FIX] ──
-                    commission = self._reward_calc.on_open_commission()
-                    self._balance             += commission
-                    reward                    += commission   # Trừ commission đảo chiều
-                    new_dir = 1 if action == 1 else -1
-                    spread_adj = self._spread_usd if new_dir == 1 else -self._spread_usd
-                    self._position_dir         = new_dir
-                    self._entry_price          = current_price + spread_adj
+                    # ── Mở ngay lệnh ngược chiều trong cùng 1 step ──
+                    commission         = self._reward_calc.on_open_commission()
+                    self._balance     += commission
+                    reward            += commission
+                    new_dir            = 1 if action == 1 else -1
+                    spread_adj         = self._spread_usd if new_dir == 1 else -self._spread_usd
+                    self._position_dir = new_dir
+                    self._entry_price  = current_price + spread_adj
             else:
                 # Giữ lệnh tiếp — kiểm tra swap qua đêm
                 self._consecutive_hold += 1
                 is_midnight = (self._cursor % 96 == 0)  # M15: 96 nến = 24h
                 is_friday   = (self._get_current_dow() == 4 and is_midnight)
-                swap_r = self._reward_calc.on_midnight_swap(is_friday) if is_midnight else 0.0
+                swap_r      = self._reward_calc.on_midnight_swap(is_friday) if is_midnight else 0.0
                 self._balance += swap_r
                 reward = self._reward_calc.on_hold(
                     self._consecutive_hold,
                     has_position=True,
                     oracle_action=oracle_action,
-                ) + swap_r     else:
-            # Có vị thế → đóng khi action = ngược chiều hoặc Hold → tiếp tục giữ
-            if (action == 0) or (action == self._position_dir + 1):
-                # Đóng lệnh
-                pnl = self._calc_pnl(self._entry_price, current_price,
-                                     self._position_dir, self._lot)
-                self._balance         += pnl
-                self._peak_balance     = max(self._peak_balance, self._balance)
-                reward                 = self._reward_calc.on_close(
-                    pnl, self._consecutive_hold,
-                    self._peak_balance, self._balance
-                )
-                self._position_dir     = 0
-                self._entry_price      = 0.0
-                self._consecutive_hold = 0
-            else:
-                # Giữ lệnh tiếp
-                self._consecutive_hold += 1
-                reward = self._reward_calc.on_hold(self._consecutive_hold, oracle_action)
+                ) + swap_r
 
         # ── Kiểm tra điều kiện kết thúc ───────────────────────────────
-        drawdown = self._peak_balance - self._balance
-        if drawdown >= self._max_dd:
-            terminated = True  # Drawdown vượt $20 → game over
+        drawdown   = self._peak_balance - self._balance
+        terminated = drawdown >= self._max_dd
 
         self._cursor += 1
         truncated = self._cursor >= len(self._close)
@@ -559,9 +568,13 @@ class XAUUSDEnv(gym.Env):
     # ── Helpers ────────────────────────────────────────────────────────
 
     def _get_obs(self) -> np.ndarray:
+        """[FIX] features là 2D (T, F) — slice window bình thường."""
         start = self._cursor - self._window
-        end   = self._cursor
-        return self._features[start:end].copy()
+        return self._features[start:self._cursor].copy()
+
+    def _get_current_dow(self) -> int:
+        """Ngày trong tuần (0=Mon, 4=Fri) — ước tính từ cursor."""
+        return (self._cursor // 96) % 7   # M15: 96 nến = 1 ngày
 
     def _calc_pnl(
         self,
@@ -577,6 +590,8 @@ class XAUUSDEnv(gym.Env):
         """
         return (exit_price - entry_price) * direction * lot
 ```
+
+
 
 - [ ] **Chạy để verify PASS:**
 ```bash
