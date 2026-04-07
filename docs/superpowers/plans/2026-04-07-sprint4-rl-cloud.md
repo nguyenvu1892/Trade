@@ -151,6 +151,12 @@ def collect_rollout(vec_env, model, device, rollout_steps=2048):
         done_list.append(torch.tensor(terms | truncs, dtype=torch.float32))
         obs = next_obs
 
+    # [FIX GAE] Lấy value của bước tiếp theo để tính GAE chuẩn xác
+    with torch.no_grad():
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=device)
+        _, next_value = model(obs_t)
+        next_value = next_value.squeeze(-1).cpu()
+
     return (
         torch.stack(obs_list),
         torch.stack(act_list),
@@ -158,6 +164,7 @@ def collect_rollout(vec_env, model, device, rollout_steps=2048):
         torch.stack(rew_list),
         torch.stack(done_list),
         torch.stack(val_list),
+        next_value,
     )
 
 
@@ -217,30 +224,37 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
     # [FIX GROUNDHOG] Chi 1 episode - chay den het OOS (truncated = True)
     obs, _ = env.reset()
     done = False
-    balance_hist = [200.0]
+    
+    # [FIX SHARPE OOS] Dùng Equity thay vì Balance để thấy rõ Unrealized Drawdown
+    equity_hist = [200.0]
     while not done:
         obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
         with torch.no_grad():
             logits, _ = model(obs_t)
             action = logits.argmax(-1).item()   # deterministic (greedy)
-        obs, _, term, trunc, _ = env.step(action)
-        balance_hist.append(env._balance)
+        obs, _, term, trunc, info = env.step(action)
+        equity_hist.append(info.get("equity", 200.0))
         done = term or trunc
 
     model.train()
-    bar_returns = np.diff(balance_hist) / np.array(balance_hist[:-1])
+    bar_returns = np.diff(equity_hist) / np.array(equity_hist[:-1])
     metrics = compute_metrics(bar_returns)
     return metrics["sharpe"]
 
 
-def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
-    """Generalized Advantage Estimation."""
+def compute_gae(rewards, values, next_value, dones, gamma=0.99, lam=0.95):
+    """Generalized Advantage Estimation - [FIX BELLMAN] Dùng next_val."""
     T, E = rewards.shape
     advantages = torch.zeros_like(rewards)
     last_adv   = 0.0
     for t in reversed(range(T)):
+        if t == T - 1:
+            next_val = next_value
+        else:
+            next_val = values[t+1]
+        
         mask       = 1.0 - dones[t]
-        delta      = rewards[t] + gamma * (values[t] * mask) - values[t]
+        delta      = rewards[t] + gamma * next_val * mask - values[t]
         last_adv   = delta + gamma * lam * mask * last_adv
         advantages[t] = last_adv
     returns = advantages + values
@@ -355,10 +369,10 @@ def train(args):
     for update in range(1, total_updates + 1):
         kl_coef = max(0.05, 0.5 * math.exp(-update / (total_updates * 0.5)))
 
-        obs, actions, logps, rewards, dones, values = \
+        obs, actions, logps, rewards, dones, values, next_value = \
             collect_rollout(vec_env, ppo_model, device, rollout_steps)
 
-        adv, returns = compute_gae(rewards, values, dones)
+        adv, returns = compute_gae(rewards, values, next_value, dones)
 
         raw_ret = returns.view(-1)
         ret_rms.update(raw_ret)

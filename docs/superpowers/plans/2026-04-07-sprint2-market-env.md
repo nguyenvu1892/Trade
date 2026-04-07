@@ -481,14 +481,15 @@ class XAUUSDEnv(gym.Env):
         import h5py
         if h5_path is not None:
             self._is_prewindowed = True
-            # Load metadata và 1D arrays vào RAM (rất nhỏ, ko bị OOM)
+            # [FIX DISK I/O] Đọc toàn bộ chunk của worker này vào RAM (Khoảng 15-20MB/worker)
+            # Tránh mở/đóng file HDF5 131,000 lần mỗi epoch!
             with h5py.File(h5_path, "r") as f:
                 n_features = f["X"].shape[2]
                 total_len  = f["X"].shape[0] if end_idx == -1 else end_idx
+                self._features  = f["X"][start_idx:total_len].astype(np.float32)
                 self._close     = f["close"][start_idx:total_len].astype(np.float32)
                 self._open_next = f["open_next"][start_idx:total_len].astype(np.float32)
                 self._oracle    = f["y"][start_idx:total_len]
-            self._features = None
         else:
             # Tham số fallback dành cho Unit Test 2D mode
             assert features is not None and features.ndim == 2
@@ -615,16 +616,39 @@ class XAUUSDEnv(gym.Env):
                     oracle_action=oracle_action,
                 ) + swap_r
 
-        # ── Kiểm tra điều kiện kết thúc ───────────────────────────────
-        drawdown   = self._peak_balance - self._balance
-        terminated = drawdown >= self._max_dd
+        # ── Kiểm tra điều kiện kết thúc & Tính Equity ─────────────────────
+        # [FIX SHARPE] Tính Equity = Balance + Unrealized PnL để report chính xác
+        unrealized_pnl = 0.0
+        if self._position_dir != 0:
+            unrealized_pnl = self._calc_pnl(
+                self._entry_price, current_close,
+                self._position_dir, self._lot
+            )
+        equity = self._balance + unrealized_pnl
 
         self._cursor += 1
-        truncated = self._cursor >= len(self._close)
+        
+        # Nếu dùng mode test (end_idx != -1) -> dừng khi hết chunk
+        if self._end_idx != -1 and self._cursor >= (self._end_idx - self._start_idx) - 1:
+            truncated = True
+        elif self._is_prewindowed and self._cursor >= len(self._close) - 1:
+            truncated = True
+        # Nếu dùng 2D raw -> dừng khi hết features
+        elif not self._is_prewindowed and self._cursor >= len(self._features) - 1:
+            truncated = True
+        else:
+            truncated = False
 
-        return self._get_obs(), reward, terminated, truncated, {
+        # Phạt cháy tài khoản (Drawdown lố)
+        terminated = False
+        if equity <= self._init_balance - self._max_dd:
+            terminated = True
+            reward    -= 5.0  
+
+        return self._get_obs(), float(reward), terminated, truncated, {
             "balance":  self._balance,
-            "drawdown": drawdown,
+            "equity":   equity,  # Dùng để tính Sharpe ratio thực sự
+            "drawdown": self._peak_balance - equity,
         }
 
     # ── Helpers ────────────────────────────────────────────────────────
@@ -632,14 +656,11 @@ class XAUUSDEnv(gym.Env):
     def _get_obs(self) -> np.ndarray:
         """
         [FIX DUAL-MODE & OOM]
-        - Khởi tạo qua HDF5 (Lazy Load): mở file và đọc vị trí _cursor
-        - Khởi tạo qua 2D raw  (Memory) : slice features[cursor-W : cursor]
+        - 3D pre-windowed (HDF5 array cache): trả là features[cursor] cực nhanh
+        - 2D raw            : slice features[cursor-W : cursor]
         """
-        if self.h5_path is not None:
-            import h5py
-            with h5py.File(self.h5_path, "r") as f:
-                # Phải cộng start_idx để map đúng worker chunk
-                return f["X"][self._start_idx + self._cursor].astype(np.float32)
+        if self._is_prewindowed:
+            return self._features[self._cursor].copy()
         else:
             start = self._cursor - self._window
             return self._features[start:self._cursor].copy()
