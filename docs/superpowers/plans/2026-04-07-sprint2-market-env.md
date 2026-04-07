@@ -76,7 +76,7 @@ class TestRewardCalculator:
         assert r < 0, f"Lệnh thua phải có reward âm, nhận: {r}"
 
     def test_holding_cost_only_when_flat(self):
-        """Phạt đứng im CHỈ khi Flat (không có vị thế). Khi đang giữ lệnh = 0."""
+        """Phạt đứng im CHỈ khi Flat. Khi đang giữ lệnh = 0."""
         r_flat    = self.calc.on_hold(consecutive_hold=5, has_position=False,
                                       oracle_action=0)
         r_holding = self.calc.on_hold(consecutive_hold=5, has_position=True,
@@ -86,11 +86,18 @@ class TestRewardCalculator:
             f"Không được phạt khi đang giữ lệnh có lời, nhận: {r_holding}"
         )
 
-    def test_holding_cost_accumulates(self):
-        """Phạt Flat cộng dồn theo số nến."""
-        r0 = self.calc.on_hold(consecutive_hold=1, has_position=False, oracle_action=0)
-        r5 = self.calc.on_hold(consecutive_hold=5, has_position=False, oracle_action=0)
-        assert r5 < r0, "Phạt Flat phải tăng theo thời gian"
+    def test_holding_cost_flat_rate_not_accumulating(self):
+        """
+        [FIX] Phạt phải là FLAT RATE, không cộng dồn theo thời gian.
+        Lý do: Nếu cộng dồn (-0.001 × 50 = -0.05/nến), bot sẽ 'lách
+        luật' bằng cách mở + đóng ngay lệnh chỉ để reset counter → Overtrading.
+        Phạt flat rate thì không tạo 'mortgage effect' hấp dẫn hơn commission.
+        """
+        r_bar1  = self.calc.on_hold(consecutive_hold=1,  has_position=False, oracle_action=0)
+        r_bar50 = self.calc.on_hold(consecutive_hold=50, has_position=False, oracle_action=0)
+        assert r_bar1 == r_bar50, (
+            f"Phạt phải cố định: bar1={r_bar1}, bar50={r_bar50}. Không cộng dồn!"
+        )
 
     def test_drawdown_penalty_triggers(self):
         """Phạt nặng khi drawdown vượt $20."""
@@ -178,17 +185,19 @@ class RewardCalculator:
     def on_hold(
         self,
         consecutive_hold: int,
-        has_position:     bool = False,   # [FIX] chỉ phạt khi Flat
+        has_position:     bool = False,
         oracle_action:    int  = 0,
     ) -> float:
         """Reward mỗi timestep.
-        - Flat + đứng im: phạt (bot không chịu tham gia thị trường)
-        - Có vị thế + kiên nhẫn giữ: không phạt (thị trường cần thời gian chạy tới TP)
+        - Flat + đứng im: phạt CỐ ĐỊNH (không cộng dồn — tránh Overtrading)
+        - Có vị thế + kiên nhẫn giữ: không phạt
         """
         if has_position:
-            return 0.0  # [FIX] Không phạt patience khi giữ lệnh
+            return 0.0
 
-        reward = -self.holding_cost_per_bar * consecutive_hold
+        # [FIX] Flat rate — không nhân với consecutive_hold
+        # Nếu cộng dồn: bot mở + đóng lệnh ngay lập tức để reset counter → Overtrading
+        reward = -self.holding_cost_per_bar
         if oracle_action in (1, 2):
             reward -= self.opportunity_cost_usd
         return reward

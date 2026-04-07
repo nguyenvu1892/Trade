@@ -45,7 +45,329 @@ scripts/
 
 ```python
 """
-train_rl.py  (CleanRL-style)
+train_rl.py  (CleanRL-style — v3, fixed)
+-----------------------------------------
+Phase 2: PPO Reinforcement Learning Fine-tuning.
+
+Fix log:
+  v1: initial CleanRL draft
+  v2: AsyncVectorEnv để song song hóa CPU
+  v3: [FIX OOM] Dùng h5_path + offset thay vì truyền raw array
+      [FIX SYN] compute_gae thiếu 'def'
+      [FIX DC]  Xóa dead code sau return trong make_async_envs
+      [FIX RMS] Freeze RunningMeanStd trong PPO epochs, chỉ update 1 lần/rollout
+
+Cách dùng:
+  python src/training/train_rl.py \\\
+      --h5      data/processed/XAUUSD_M15_w128.h5 \\\
+      --bc-ckpt checkpoints/best_model_bc.pt \\\
+      --n-envs  64 \\\
+      --total-steps 2000000
+"""
+
+import argparse
+import logging
+import math
+import sys
+from pathlib import Path
+
+import h5py
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.distributions import Categorical
+from gymnasium.vector import AsyncVectorEnv
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.model.transformer import XAUTransformer
+from src.env.xauusd_env import XAUUSDEnv
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+
+CHECKPOINT_DIR = Path("checkpoints")
+
+
+def make_async_envs(
+    h5_path:      str,   # [FIX OOM] Chỉ truyền đường dẫn, không truyền array
+    n_total:      int,
+    split_idx:    int,
+    window_size:  int,
+    n_envs:       int,
+):
+    """
+    [FIX OOM] Truyền h5_path + offset vào closure thay vì raw numpy array.
+
+    Vấn đề: multiprocessing pickle toàn bộ X (vài GB) thành 64 bản sao.
+    Giải pháp: Mỗi worker tự đọc slice dữ liệu từ file HDF5 của chính nó.
+    HDF5 hỗ trợ concurrent read, không cần lock.
+    """
+    def _make_env_fn(offset: int):
+        def _init():
+            # Mỗi worker mở file HDF5 trong process riêng của nó
+            with h5py.File(h5_path, "r") as f:
+                X_slice      = f["X"][offset:split_idx].astype(np.float32)
+                label_slice  = f["y"][offset:split_idx]
+            # close_prices: placeholder — thay bằng real close khi có pipeline
+            close_slice = np.ones(len(X_slice), dtype=np.float32) * 1900.0
+            return XAUUSDEnv(
+                features         = X_slice,
+                close_prices     = close_slice,
+                oracle_labels    = label_slice,
+                window_size      = window_size,
+                spread_pips      = 25,
+                lot_size         = 0.01,
+                initial_balance  = 200.0,
+                max_drawdown_usd = 20.0,
+            )
+        return _init
+
+    # [FIX DC] Không có dead code sau return
+    return AsyncVectorEnv([
+        _make_env_fn((i * 500) % max(1, split_idx - window_size - 2000))
+        for i in range(n_envs)
+    ])
+
+
+def collect_rollout(vec_env, model, device, rollout_steps=2048):
+    """
+    Thu thập rollout từ AsyncVectorEnv — tất cả envs step() song song.
+    Trả về (obs, actions, log_probs, rewards, dones, values).
+    """
+    obs_list, act_list, logp_list, rew_list, done_list, val_list = \
+        [], [], [], [], [], []
+
+    obs, _ = vec_env.reset()
+
+    for _ in range(rollout_steps):
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=device)
+        with torch.no_grad():
+            logits, value = model(obs_t)
+            dist   = Categorical(logits=logits)
+            action = dist.sample()
+            logp   = dist.log_prob(action)
+
+        obs_list.append(obs_t.cpu())
+        act_list.append(action.cpu())
+        logp_list.append(logp.cpu())
+        val_list.append(value.squeeze(-1).cpu())
+
+        next_obs, rewards, terms, truncs, _ = vec_env.step(action.cpu().numpy())
+        rew_list.append(torch.tensor(rewards, dtype=torch.float32))
+        done_list.append(torch.tensor(terms | truncs, dtype=torch.float32))
+        obs = next_obs
+
+    return (
+        torch.stack(obs_list),
+        torch.stack(act_list),
+        torch.stack(logp_list),
+        torch.stack(rew_list),
+        torch.stack(done_list),
+        torch.stack(val_list),
+    )
+
+
+class RunningMeanStd:
+    """
+    [FIX RMS] Chỉ update 1 lần SAU mỗi rollout — freeze trong suốt PPO epochs.
+
+    Lý do: Nếu update trong mỗi mini-batch, 'target' của Value Head thay đổi
+    liên tục (Non-stationary target) → Value Head học rất chậm / không hội tụ.
+    Giải pháp: Gọi ret_rms.update() 1 lần trước ppo_update(),
+    rồi dùng mean/var đã freeze cho cả 4 epochs của PPO.
+    """
+    def __init__(self, epsilon: float = 1e-8):
+        self.mean  = 0.0
+        self.var   = 1.0
+        self.count = epsilon
+
+    def update(self, x: torch.Tensor) -> None:
+        """Gọi NGOAI ppo_update() — 1 lần/rollout."""
+        v = x.detach().float()
+        b_mean, b_var, b_n = v.mean().item(), v.var().item(), v.numel()
+        total = self.count + b_n
+        delta = b_mean - self.mean
+        self.mean  += delta * b_n / total
+        self.var    = (self.var * self.count + b_var * b_n +
+                       delta ** 2 * self.count * b_n / total) / total
+        self.count  = total
+
+    def normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """Dùng mean/var đã “freeze” (không gọi update() trong hàm này)."""
+        return ((x - self.mean) / (self.var ** 0.5 + 1e-8)).clamp(-10.0, 10.0)
+
+
+# [FIX SYN] Thêm 'def' bị thiếu do copy/paste lỗi
+def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
+    """Generalized Advantage Estimation."""
+    T, E = rewards.shape
+    advantages = torch.zeros_like(rewards)
+    last_adv   = 0.0
+    for t in reversed(range(T)):
+        mask       = 1.0 - dones[t]
+        delta      = rewards[t] + gamma * (values[t] * mask) - values[t]
+        last_adv   = delta + gamma * lam * mask * last_adv
+        advantages[t] = last_adv
+    returns = advantages + values
+    return advantages, returns
+
+
+def ppo_update(
+    model,
+    bc_model,
+    optimizer,
+    obs, actions, old_logps, flat_ret, advantages,
+    device,
+    clip_eps   = 0.2,
+    vf_coef    = 0.5,
+    ent_coef   = 0.01,
+    kl_coef    = 0.3,
+    n_epochs   = 4,
+    batch_size = 256,
+):
+    """
+    PPO update với KL Anchor.
+    Returns đã được chuẩn hóa BÊN NGOAI (RunningMeanStd.update() gọi trước).
+    flat_ret là tensor đã normalize, mean/var freeze trong suốt vòng lặp.
+    """
+    T, E = obs.shape[:2]
+    flat_obs  = obs.view(T * E, *obs.shape[2:]).to(device)
+    flat_act  = actions.view(-1).to(device)
+    flat_logp = old_logps.view(-1).to(device)
+    flat_adv  = advantages.view(-1).to(device)
+    flat_adv  = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)
+    # flat_ret đã sẵn sàng (normalized, frozen)
+    flat_ret  = flat_ret.to(device)
+
+    losses = []
+    for _ in range(n_epochs):
+        idx = torch.randperm(T * E, device=device)
+        for start in range(0, T * E, batch_size):
+            b = idx[start:start + batch_size]
+            logits, value = model(flat_obs[b])
+            dist    = Categorical(logits=logits)
+            logp    = dist.log_prob(flat_act[b])
+            entropy = dist.entropy().mean()
+
+            ratio   = (logp - flat_logp[b]).exp()
+            pg_loss = -torch.min(
+                ratio * flat_adv[b],
+                ratio.clamp(1 - clip_eps, 1 + clip_eps) * flat_adv[b]
+            ).mean()
+
+            vf_loss = F.mse_loss(value.squeeze(-1), flat_ret[b])
+
+            # KL Anchor ─────────────────────────────────────
+            with torch.no_grad():
+                bc_logits, _ = bc_model(flat_obs[b])
+            kl_loss = F.kl_div(
+                F.log_softmax(logits, dim=-1),
+                F.softmax(bc_logits, dim=-1),
+                reduction="batchmean",
+            )
+
+            loss = pg_loss + vf_coef * vf_loss - ent_coef * entropy + kl_coef * kl_loss
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            optimizer.step()
+            losses.append(loss.item())
+
+    return np.mean(losses)
+
+
+def train(args):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log.info(f"Device: {device}")
+
+    # ── đọc metadata từ HDF5 (không load toàn bộ vào RAM main process) ──
+    with h5py.File(args.h5, "r") as f:
+        n_total, window_size, n_features = f["X"].shape
+    split_idx = int(n_total * 0.8)
+    log.info(f"Dataset: N={n_total}, W={window_size}, F={n_features} | split={split_idx}")
+
+    # ── BC Model ───────────────────────────────────────────────────
+    ckpt = torch.load(args.bc_ckpt, map_location=device)
+    bc_model = XAUTransformer(n_features=n_features, window_size=window_size,
+                              d_model=256, n_heads=8, n_layers=6).to(device)
+    bc_model.load_state_dict(ckpt["model_state"])
+    bc_model.eval()
+    for p in bc_model.parameters():
+        p.requires_grad = False
+    log.info(f"BC loaded: F1_buy={ckpt['f1_buy']:.3f}")
+
+    ppo_model = XAUTransformer(n_features=n_features, window_size=window_size,
+                               d_model=256, n_heads=8, n_layers=6).to(device)
+    ppo_model.load_state_dict(ckpt["model_state"])
+    optimizer = optim.AdamW(ppo_model.parameters(), lr=args.lr, weight_decay=1e-4)
+
+    # ── [FIX OOM] Envs đọc HDF5 từ file, không copy array ──────────────
+    vec_env = make_async_envs(
+        h5_path=args.h5, n_total=n_total,
+        split_idx=split_idx, window_size=window_size,
+        n_envs=args.n_envs,
+    )
+    log.info(f"{args.n_envs} async envs ready")
+
+    rollout_steps = 2048
+    total_updates = args.total_steps // (rollout_steps * args.n_envs)
+    CHECKPOINT_DIR.mkdir(exist_ok=True)
+    ret_rms = RunningMeanStd()  # [FIX RMS] khởi tạo ngoài vòng lặp
+
+    for update in range(1, total_updates + 1):
+        kl_coef = max(0.05, 0.5 * math.exp(-update / (total_updates * 0.5)))
+
+        obs, actions, logps, rewards, dones, values = \
+            collect_rollout(vec_env, ppo_model, device, rollout_steps)
+
+        adv, returns = compute_gae(rewards, values, dones)
+
+        # [FIX RMS] Update RMS 1 lần sau rollout, FREEZE khi ppo_update()
+        raw_ret = returns.view(-1)
+        ret_rms.update(raw_ret)
+        flat_ret_norm = ret_rms.normalize(raw_ret)  # tensor, freeze từ đây
+
+        loss = ppo_update(
+            ppo_model, bc_model, optimizer,
+            obs, actions, logps, flat_ret_norm, adv,
+            device, kl_coef=kl_coef
+        )
+
+        if update % 10 == 0:
+            log.info(f"Update {update:4d}/{total_updates} | "
+                     f"Loss={loss:.4f} | AvgRew={rewards.mean():.4f} | KLλ={kl_coef:.3f}")
+
+        if update % 100 == 0:
+            torch.save(ppo_model.state_dict(),
+                       CHECKPOINT_DIR / f"ppo_step{update}.pt")
+
+    log.info("🎉 PPO training hoàn tất!")
+    torch.save(ppo_model.state_dict(), CHECKPOINT_DIR / "ppo_final.pt")
+    vec_env.close()
+
+
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--h5",          required=True)
+    p.add_argument("--bc-ckpt",     required=True, dest="bc_ckpt")
+    p.add_argument("--n-envs",      type=int,   default=64,        dest="n_envs")
+    p.add_argument("--total-steps", type=int,   default=2_000_000, dest="total_steps")
+    p.add_argument("--lr",          type=float, default=1e-4)
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    train(parse_args())
+```
+
+- [ ] **Commit:**
+```bash
+git add src/training/train_rl.py
+git commit -m "feat(sprint4): PPO CleanRL - AsyncVectorEnv, KL anchor, RMS freeze, OOM fix"
+```
 ----------------------------
 Phase 2: PPO Reinforcement Learning Fine-tuning.
 
