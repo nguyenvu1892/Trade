@@ -1,4 +1,4 @@
-﻿# XAUUSD Bot Ã¢â‚¬â€ Sprint 4: RL Fine-tuning & Cloud Scale-up (Phase 2)
+# XAUUSD Bot Ã¢â‚¬â€ Sprint 4: RL Fine-tuning & Cloud Scale-up (Phase 2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -105,12 +105,14 @@ def make_async_envs(
     def _make_env_fn(offset: int):
         def _init():
             with h5py.File(h5_path, "r") as f:
-                X_slice      = f["X"][offset:split_idx].astype(np.float32)
-                label_slice  = f["y"][offset:split_idx]
-                close_slice  = f["close"][offset:split_idx].astype(np.float32)  # [FIX]
+                X_slice         = f["X"][offset:split_idx].astype(np.float32)
+                label_slice     = f["y"][offset:split_idx]
+                close_slice     = f["close"][offset:split_idx].astype(np.float32)
+                open_next_slice = f["open_next"][offset:split_idx].astype(np.float32) # [FIX LOOKAHEAD]
             return XAUUSDEnv(
                 features         = X_slice,
-                close_prices     = close_slice,   # real prices!
+                close_prices     = close_slice,
+                open_next_prices = open_next_slice, # [FIX]
                 oracle_labels    = label_slice,
                 window_size      = window_size,
                 spread_pips      = 25,
@@ -219,7 +221,7 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
         spread_pips      = 25,
         lot_size         = 0.01,
         initial_balance  = 200.0,
-        max_drawdown_usd = 20.0,
+        max_drawdown_usd = 999999.0, # [FIX OOS] Vô cực để chạy hết OOS, tránh chết yểu
     )
     model.eval()
 

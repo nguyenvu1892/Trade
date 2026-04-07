@@ -591,7 +591,7 @@ class XAUUSDEnv(gym.Env):
                     new_dir            = 1 if action == 1 else -1
                     spread_adj         = self._spread_usd if new_dir == 1 else -self._spread_usd
                     self._position_dir = new_dir
-                    self._entry_price  = current_price + spread_adj
+                    self._entry_price  = entry_price + spread_adj
             else:
                 # Giữ lệnh tiếp — kiểm tra swap qua đêm
                 self._consecutive_hold += 1

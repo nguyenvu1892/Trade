@@ -989,7 +989,18 @@ def run_pipeline(
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     out_path = OUTPUT_DIR / f"XAUUSD_{tf_name}_w{window_size}.h5"
     builder  = DatasetBuilder(window_size=window_size)
-    builder.build(features, labels, out_path)
+
+    # Lấy giá gốc để truyền vào simulator
+    close_prices = df.loc[features.index, "close"]
+    open_next    = df.loc[features.index, "open"].shift(-1).bfill()
+
+    builder.build(
+        features=features,
+        labels=labels,
+        out_path=out_path,
+        close_prices=close_prices,
+        open_next_prices=open_next
+    )
     log.info(f"  ✅ Dataset saved: {out_path}")
 
 
