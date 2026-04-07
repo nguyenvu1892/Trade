@@ -2,11 +2,16 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fine-tune model BC bằng PPO Reinforcement Learning — tối ưu Drawdown, Sharpe, Win Rate trên out-of-sample. Đóng gói Docker để triển khai lên Vast.ai GPU server.
+**Goal:** Fine-tune model BC bằng PPO Reinforcement Learning (CleanRL) — tối ưu Drawdown, Sharpe, Win Rate trên out-of-sample. Đóng gói Docker để triển khai lên Vast.ai GPU server.
 
-**Architecture:** Load `best_model_bc.pt` → wrap vào SB3 CustomPolicy → PPO training trong `XAUUSDEnv` với Vectorized Environments (64 envs song song). KL-Divergence anchor chống Catastrophic Forgetting. Backtest out-of-sample báo cáo Sharpe, Sortino, Max Drawdown.
+**Architecture:** Load `best_model_bc.pt` → sử dụng **CleanRL** (không dùng SB3) — toàn bộ loss logic trong 1 file duy nhất, dễ đọc và chỉnh sửa. Transformer được nhúng trực tiếp vào PPO actor-critic, không bị flatten. KL-Divergence anchor chống Catastrophic Forgetting được chèn thẳng vào training loop chỉ 2 dòng toán học.
 
-**Tech Stack:** PyTorch, stable-baselines3, gymnasium, Docker, quantstats, pytest
+**Lý do KHÔNG dùng Stable-Baselines3 (SB3):**
+- SB3 mặc định **flatten** input 2D `(128, 12)` thành `(1536,)` trước khi đưa vào mạng — phá vỡ cấu trúc thời gian của Transformer hoàn toàn.
+- Việc hack SB3 để thêm KL Penalty loss tùy chỉnh đòi hỏi monkey-patch rất phức tạp và dễ gây regression.
+- CleanRL giải quyết cả 2 vấn đề chỉ với 2 dòng code.
+
+**Tech Stack:** PyTorch, CleanRL (single-file PPO), gymnasium, Docker, quantstats, pytest
 
 ---
 
@@ -14,7 +19,7 @@
 
 ```
 src/training/
-├── train_rl.py              [NEW] — PPO fine-tuning với KL anchor
+├── train_rl.py              [NEW] — CleanRL PPO single-file + KL anchor + Transformer
 ├── backtest.py              [NEW] — Out-of-sample evaluation & report
 └── tests/
     └── test_backtest.py     [NEW]
@@ -22,7 +27,7 @@ src/training/
 Dockerfile                   [NEW] — Container cho Vast.ai
 scripts/
 ├── vast_launch.sh           [NEW] — Script khởi động training trên Vast.ai
-└── vast_pull_results.sh     [NEW] — Script kéo kết quả về local
+└── pull_results.sh          [NEW] — Script kéo kết quả về local
 ```
 
 ---
@@ -32,9 +37,303 @@ scripts/
 **Files:**
 - Create: `src/training/train_rl.py`
 
-### Step 1.1: Implement train_rl.py
+### Step 1.1: Implement train_rl.py (CleanRL style)
+
+> ⚠️ **Không dùng SB3.** Dùng CleanRL approach: tài PPO thụ công trong 1 file, chèn Transformer và KL Anchor trực tiếp.
 
 - [ ] **Tạo `src/training/train_rl.py`:**
+
+```python
+"""
+train_rl.py  (CleanRL-style)
+----------------------------
+Phase 2: PPO Reinforcement Learning Fine-tuning.
+
+KHÔNG dùng Stable-Baselines3 vì:
+  - SB3 flatten input (128, 12) → (1536,) phá Transformer
+  - Khó chèn custom KL Loss vào SB3 PPO internals
+
+Dung CleanRL approach: toàn bộ PPO logic trong 1 file, trong suốt.
+Transformer được nhúng trực tiếp vào actor-critic — không qua wrapper.
+KL anchor chỉ cần 2 dòng toán học trong vòng lặp loss.
+
+Cách dùng:
+  python src/training/train_rl.py \\
+      --h5      data/processed/XAUUSD_M15_w128.h5 \\
+      --bc-ckpt checkpoints/best_model_bc.pt \\
+      --n-envs  64 \\
+      --total-steps 2000000
+"""
+
+import argparse
+import logging
+import math
+import sys
+from pathlib import Path
+
+import h5py
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+from torch.distributions import Categorical
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from src.model.transformer import XAUTransformer
+from src.env.xauusd_env import XAUUSDEnv
+
+logging.basicConfig(level=logging.INFO,
+                    format="%(asctime)s [%(levelname)s] %(message)s")
+log = logging.getLogger(__name__)
+
+CHECKPOINT_DIR = Path("checkpoints")
+
+
+def make_envs(X, close_prices, oracle_labels, window_size, n_envs):
+    """
+    Tạo danh sách XAUUSDEnv chạy song song trong cùng process.
+    Mỗi env bắt đầu từ một offset khác nhau để đa dạng experience.
+    """
+    envs = []
+    n = len(X)
+    for i in range(n_envs):
+        offset = (i * 500) % max(1, n - window_size - 2000)
+        env = XAUUSDEnv(
+            features         = X[offset:],
+            close_prices     = close_prices[offset:],
+            oracle_labels    = oracle_labels[offset:],
+            window_size      = window_size,
+            spread_pips      = 25,
+            lot_size         = 0.01,
+            initial_balance  = 200.0,
+            max_drawdown_usd = 20.0,
+        )
+        envs.append(env)
+    return envs
+
+
+def collect_rollout(envs, model, device, rollout_steps=2048):
+    """
+    Thu thập rollout từ tất cả envs song song.
+    Trả về (obs, actions, log_probs, rewards, dones, values).
+    """
+    n_envs = len(envs)
+    obs_list, act_list, logp_list, rew_list, done_list, val_list = \
+        [], [], [], [], [], []
+
+    # Reset tất cả envs
+    obs = np.array([env.reset()[0] for env in envs])  # (n_envs, W, F)
+
+    for _ in range(rollout_steps):
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=device)  # (E, W, F)
+        with torch.no_grad():
+            logits, value = model(obs_t)
+            dist   = Categorical(logits=logits)
+            action = dist.sample()
+            logp   = dist.log_prob(action)
+
+        obs_list.append(obs_t.cpu())
+        act_list.append(action.cpu())
+        logp_list.append(logp.cpu())
+        val_list.append(value.squeeze(-1).cpu())
+
+        # Step tất cả envs
+        next_obs, rewards, terms, truncs, _ = zip(
+            *[env.step(a.item()) for env, a in zip(envs, action.cpu())]
+        )
+        rew_list.append(torch.tensor(rewards))
+        dones = [t or tr for t, tr in zip(terms, truncs)]
+        done_list.append(torch.tensor(dones, dtype=torch.float32))
+
+        # Reset env nào đã done
+        obs = np.array([
+            env.reset()[0] if done else nobs
+            for env, nobs, done in zip(envs, next_obs, dones)
+        ])
+
+    return (
+        torch.stack(obs_list),      # (T, E, W, F)
+        torch.stack(act_list),      # (T, E)
+        torch.stack(logp_list),     # (T, E)
+        torch.stack(rew_list),      # (T, E)
+        torch.stack(done_list),     # (T, E)
+        torch.stack(val_list),      # (T, E)
+    )
+
+
+def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
+    """Generalized Advantage Estimation."""
+    T, E = rewards.shape
+    advantages = torch.zeros_like(rewards)
+    last_adv   = 0.0
+    for t in reversed(range(T)):
+        mask       = 1.0 - dones[t]
+        delta      = rewards[t] + gamma * (values[t] * mask) - values[t]
+        last_adv   = delta + gamma * lam * mask * last_adv
+        advantages[t] = last_adv
+    returns = advantages + values
+    return advantages, returns
+
+
+def ppo_update(
+    model,
+    bc_model,           # Frozen BC model làm KL anchor
+    optimizer,
+    obs, actions, old_logps, returns, advantages,
+    device,
+    clip_eps  = 0.2,
+    vf_coef   = 0.5,
+    ent_coef  = 0.01,
+    kl_coef   = 0.3,    # KL anchor weight (giảm dần theo schedule)
+    n_epochs  = 4,
+    batch_size = 256,
+):
+    """
+    PPO update với KL-Divergence Anchor chống Catastrophic Forgetting.
+
+    Total_Loss = PPO_clip + vf_coef * Value_Loss
+               - ent_coef * Entropy
+               + kl_coef * KL(pi_PPO || pi_BC)   ← chỉ 2 dòng này!
+    """
+    T, E = obs.shape[:2]
+    flat_obs  = obs.view(T * E, *obs.shape[2:]).to(device)
+    flat_act  = actions.view(-1).to(device)
+    flat_logp = old_logps.view(-1).to(device)
+    flat_ret  = returns.view(-1).to(device)
+    flat_adv  = advantages.view(-1).to(device)
+    flat_adv  = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)  # Normalize
+
+    n_samples = T * E
+    losses    = []
+
+    for _ in range(n_epochs):
+        idx = torch.randperm(n_samples, device=device)
+        for start in range(0, n_samples, batch_size):
+            b = idx[start:start + batch_size]
+            b_obs = flat_obs[b]
+            b_act = flat_act[b]
+
+            logits, value = model(b_obs)
+            dist     = Categorical(logits=logits)
+            logp     = dist.log_prob(b_act)
+            entropy  = dist.entropy().mean()
+
+            # PPO Clip Loss
+            ratio    = (logp - flat_logp[b]).exp()
+            pg_loss  = -torch.min(
+                ratio * flat_adv[b],
+                ratio.clamp(1 - clip_eps, 1 + clip_eps) * flat_adv[b]
+            ).mean()
+
+            # Value Loss
+            vf_loss = F.mse_loss(value.squeeze(-1), flat_ret[b])
+
+            # KL Anchor (2 dòng) ──────────────────────────────────
+            with torch.no_grad():
+                bc_logits, _ = bc_model(b_obs)
+            kl_loss = F.kl_div(          # Giữ pi_PPO gần với pi_BC
+                F.log_softmax(logits, dim=-1),
+                F.softmax(bc_logits, dim=-1),
+                reduction="batchmean",
+            )
+            # ─────────────────────────────────────────────────
+
+            loss = (pg_loss
+                    + vf_coef * vf_loss
+                    - ent_coef * entropy
+                    + kl_coef * kl_loss)
+
+            optimizer.zero_grad()
+            loss.backward()
+            nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+            optimizer.step()
+            losses.append(loss.item())
+
+    return np.mean(losses)
+
+
+def train(args):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    log.info(f"Device: {device}")
+
+    # ── Load Dataset ─────────────────────────────────────────────
+    with h5py.File(args.h5, "r") as f:
+        X      = f["X"][:]   # (N, W, F)
+        labels = f["y"][:]
+    _, window_size, n_features = X.shape
+    split     = int(len(X) * 0.8)
+    close     = np.ones(len(X)) * 1900.0   # Placeholder — thay bằng real close
+    X_train   = X[:split]
+    lbl_train = labels[:split]
+    close_tr  = close[:split]
+
+    # ── Load BC Model (frozen anchor) ────────────────────────────
+    ckpt = torch.load(args.bc_ckpt, map_location=device)
+    bc_model = XAUTransformer(n_features=n_features, window_size=window_size,
+                              d_model=256, n_heads=8, n_layers=6).to(device)
+    bc_model.load_state_dict(ckpt["model_state"])
+    bc_model.eval()
+    for p in bc_model.parameters():
+        p.requires_grad = False
+    log.info(f"BC checkpoint loaded (F1_buy={ckpt['f1_buy']:.3f})")
+
+    # PPO model khởi tạo từ BC weights (không random!)
+    ppo_model = XAUTransformer(n_features=n_features, window_size=window_size,
+                               d_model=256, n_heads=8, n_layers=6).to(device)
+    ppo_model.load_state_dict(ckpt["model_state"])  # Muờn weights từ BC
+    optimizer = optim.AdamW(ppo_model.parameters(), lr=args.lr, weight_decay=1e-4)
+
+    # ── Envs ────────────────────────────────────────────────────
+    envs = make_envs(X_train, close_tr, lbl_train, window_size, args.n_envs)
+    log.info(f"{args.n_envs} envs tạo xong")
+
+    rollout_steps = 2048
+    total_updates = args.total_steps // (rollout_steps * args.n_envs)
+    CHECKPOINT_DIR.mkdir(exist_ok=True)
+
+    for update in range(1, total_updates + 1):
+        # KL lambda giảm dần 0.5 → 0.05 qua các updates
+        kl_coef = max(0.05, 0.5 * math.exp(-update / (total_updates * 0.5)))
+
+        obs, actions, logps, rewards, dones, values = \
+            collect_rollout(envs, ppo_model, device, rollout_steps)
+
+        adv, returns = compute_gae(rewards, values, dones)
+
+        loss = ppo_update(
+            ppo_model, bc_model, optimizer,
+            obs, actions, logps, returns, adv,
+            device, kl_coef=kl_coef
+        )
+
+        if update % 10 == 0:
+            avg_rew = rewards.mean().item()
+            log.info(f"Update {update:4d}/{total_updates} | "
+                     f"Loss={loss:.4f} | AvgReward={avg_rew:.4f} | KL_lambda={kl_coef:.3f}")
+
+        if update % 100 == 0:
+            ckpt_path = CHECKPOINT_DIR / f"ppo_step{update}.pt"
+            torch.save(ppo_model.state_dict(), ckpt_path)
+            log.info(f"  ✅ Checkpoint saved: {ckpt_path}")
+
+    log.info("🎉 PPO training hoàn tất!")
+    torch.save(ppo_model.state_dict(), CHECKPOINT_DIR / "ppo_final.pt")
+
+
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--h5",          required=True)
+    p.add_argument("--bc-ckpt",     required=True, dest="bc_ckpt")
+    p.add_argument("--n-envs",      type=int,   default=64,        dest="n_envs")
+    p.add_argument("--total-steps", type=int,   default=2_000_000, dest="total_steps")
+    p.add_argument("--lr",          type=float, default=1e-4)
+    return p.parse_args()
+
+
+if __name__ == "__main__":
+    train(parse_args())
+```
 
 ```python
 """

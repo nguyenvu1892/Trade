@@ -87,16 +87,38 @@ class TestLogReturns:
         )
 
     def test_output_has_required_columns(self):
-        """Output DataFrame phải có đủ các cột feature bắt buộc."""
+        """Output DataFrame phải có đủ 12 cột feature bắt buộc."""
         df = _make_ohlcv(200)
         proc = DataProcessor(atr_period=14)
         result = proc.compute_features(df)
         required = {
             "log_open", "log_high", "log_low", "log_close", "log_volume",
-            "atr_norm", "hour_sin", "hour_cos", "dow_sin", "dow_cos"
+            "atr_norm",  # scaled ×1000
+            "hour_sin", "hour_cos", "dow_sin", "dow_cos",
+            "is_us_session",  # [NEW] binary flag
+            "is_weekend",     # [NEW] binary flag
         }
         missing = required - set(result.columns)
         assert not missing, f"Thiếu các cột: {missing}"
+
+    def test_atr_norm_scaled(self):
+        """ATR phải được scale ×1000 — giá trị nằm quanh 0.5–5.0, không phải 0.0005."""
+        df = _make_ohlcv(200)
+        proc = DataProcessor(atr_period=14)
+        result = proc.compute_features(df)
+        atr = result["atr_norm"].dropna()
+        # ATR/price ≈ 0.001 → ×1000 ≈ 1.0
+        assert atr.mean() > 0.1, (
+            f"ATR_norm quá nhỏ ({atr.mean():.6f}) — quên nhân ×1000?"
+        )
+
+    def test_is_us_session_binary(self):
+        """is_us_session phải là 0 hoặc 1."""
+        df = _make_ohlcv(200)
+        proc = DataProcessor(atr_period=14)
+        result = proc.compute_features(df)
+        vals = result["is_us_session"].unique()
+        assert set(vals).issubset({0, 1}), f"is_us_session không phải binary: {vals}"
 
     def test_sine_cosine_range(self):
         """Sine/Cosine encoding phải nằm trong [-1, 1]."""
@@ -197,13 +219,14 @@ class DataProcessor:
         vol = df["tick_volume"].clip(lower=1)
         result["log_volume"] = np.log(vol / vol.shift(1))
 
-        # ── ATR chuẩn hóa (Average True Range / close) ───────────────
+        # ── ATR chuẩn hóa ×1000 (tránh gradient vanishing) ──────────
+        # ATR/price ≈ 0.001 → quá nhỏ cho Transformer → scale ×1000 → ~1.0
         high_low   = df["high"] - df["low"]
         high_close = (df["high"] - df["close"].shift(1)).abs()
         low_close  = (df["low"]  - df["close"].shift(1)).abs()
         true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr        = true_range.rolling(self.atr_period).mean()
-        result["atr_norm"] = atr / df["close"]  # Chuẩn hóa theo giá
+        result["atr_norm"] = (atr / df["close"]) * 1000  # ×1000 để scale về ~1.0
 
         # ── Sine/Cosine Time Encoding ─────────────────────────────────
         idx = df.index
@@ -217,6 +240,15 @@ class DataProcessor:
         result["hour_cos"] = np.cos(2 * np.pi * hour / 24)
         result["dow_sin"]  = np.sin(2 * np.pi * dow  / 7)
         result["dow_cos"]  = np.cos(2 * np.pi * dow  / 7)
+
+        # ── [NEW] US Session Flag (13:00–21:00 UTC = 08:00–16:00 EST) ─
+        # Vàng biến động mạnh nhất lúc mở cửa Mỹ (13:30 UTC) và Âu (07:00 UTC)
+        # Flag này giúp Transformer nhận ra vùng rủi ro thanh khoản cao
+        result["is_us_session"] = ((hour >= 13) & (hour < 21)).astype(np.float32)
+
+        # ── [NEW] Weekend Flag ────────────────────────────────────────
+        # Thứ 7-CN: spread giãn, thanh khoản thấp, gap khi mở cửa T2
+        result["is_weekend"] = (dow >= 5).astype(np.float32)
 
         # ── Bỏ warmup rows (NaN do rolling/shift) ─────────────────────
         result = result.dropna()
@@ -532,7 +564,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.data.dataset_builder import DatasetBuilder
 
 
-NUM_FEATURES = 10  # Phải khớp với số cột DataProcessor output
+NUM_FEATURES = 12  # log_OHLCV(5) + atr_norm + hour_sin/cos + dow_sin/cos + is_us_session + is_weekend
 
 
 def _make_feature_df(n: int = 300) -> pd.DataFrame:

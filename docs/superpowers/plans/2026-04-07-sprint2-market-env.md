@@ -50,32 +50,56 @@ class TestRewardCalculator:
             holding_cost_per_bar = 0.001,
         )
 
+    def test_commission_deducted_on_open(self):
+        """$0.07 commission phải bị trừ ngay khi mở lệnh."""
+        r = self.calc.on_open_commission()
+        assert r == -0.07, f"Commission phải là -$0.07, nhận: {r}"
+
+    def test_swap_deducted_at_midnight(self):
+        """Swap -$0.05 phải bị trừ khi giử lệnh qua 00:00 server."""
+        r = self.calc.on_midnight_swap(is_friday=False)
+        assert r == -0.05, f"Swap phải là -$0.05, nhận: {r}"
+
+    def test_swap_triple_on_friday(self):
+        """Thứ 6 tính swap x3 (bù cho cả weekend)."""
+        r = self.calc.on_midnight_swap(is_friday=True)
+        assert r == -0.15, f"Swap thứ 6 phải là -$0.15, nhận: {r}"
+
     def test_winning_trade_positive_reward(self):
         """Lệnh thắng → reward dương."""
-        r = self.calc.on_close(pnl=2.5, consecutive_hold=0, peak_balance=200.0, current_balance=202.5)
+        r = self.calc.on_close(pnl=2.5, peak_balance=200.0, current_balance=202.5)
         assert r > 0, f"Lệnh thắng phải có reward dương, nhận: {r}"
 
     def test_losing_trade_negative_reward(self):
         """Lệnh thua → reward âm."""
-        r = self.calc.on_close(pnl=-1.0, consecutive_hold=0, peak_balance=200.0, current_balance=199.0)
+        r = self.calc.on_close(pnl=-1.0, peak_balance=200.0, current_balance=199.0)
         assert r < 0, f"Lệnh thua phải có reward âm, nhận: {r}"
 
+    def test_holding_cost_only_when_flat(self):
+        """Phạt đứng im CHỈ khi Flat (không có vị thế). Khi đang giữ lệnh = 0."""
+        r_flat    = self.calc.on_hold(consecutive_hold=5, has_position=False,
+                                      oracle_action=0)
+        r_holding = self.calc.on_hold(consecutive_hold=5, has_position=True,
+                                      oracle_action=0)
+        assert r_flat < 0, "Phải phạt khi Flat"
+        assert r_holding == 0.0, (
+            f"Không được phạt khi đang giữ lệnh có lời, nhận: {r_holding}"
+        )
+
     def test_holding_cost_accumulates(self):
-        """Phạt đứng im cộng dồn theo số nến."""
-        r0 = self.calc.on_hold(consecutive_hold=1)
-        r5 = self.calc.on_hold(consecutive_hold=5)
-        assert r5 < r0, "Phạt đứng im phải tăng theo thời gian"
+        """Phạt Flat cộng dồn theo số nến."""
+        r0 = self.calc.on_hold(consecutive_hold=1, has_position=False, oracle_action=0)
+        r5 = self.calc.on_hold(consecutive_hold=5, has_position=False, oracle_action=0)
+        assert r5 < r0, "Phạt Flat phải tăng theo thời gian"
 
     def test_drawdown_penalty_triggers(self):
         """Phạt nặng khi drawdown vượt $20."""
-        # Balance 178 → drawdown 22 > 20
-        r = self.calc.on_close(pnl=-22.0, consecutive_hold=0, peak_balance=200.0, current_balance=178.0)
+        r = self.calc.on_close(pnl=-22.0, peak_balance=200.0, current_balance=178.0)
         assert r < -10, f"Drawdown penalty phải rất nặng, nhận: {r}"
 
     def test_no_penalty_within_drawdown_limit(self):
         """Không có drawdown penalty khi balance vẫn trên ngưỡng."""
-        r = self.calc.on_close(pnl=-5.0, consecutive_hold=0, peak_balance=200.0, current_balance=195.0)
-        # Thua -5 nhưng chưa vượt -20 drawdown
+        r = self.calc.on_close(pnl=-5.0, peak_balance=200.0, current_balance=195.0)
         assert r > -10, f"Không nên có penalty nặng khi trong giới hạn: {r}"
 
     def test_opportunity_cost_when_oracle_says_trade(self):
@@ -119,44 +143,54 @@ class RewardCalculator:
         self,
         initial_balance:      float = 200.0,
         max_drawdown_usd:     float = 20.0,
-        holding_cost_per_bar: float = 0.001,
+        holding_cost_per_bar: float = 0.001,   # Chỉ áp khi FLAT
         opportunity_cost_usd: float = 0.5,
+        commission_usd:       float = 0.07,    # [NEW] Exness Raw $7/lot → $0.07 cho 0.01 lot
+        swap_per_night:       float = 0.05,    # [NEW] Swap âm ≈ -$0.05/đêm cho 0.01 lot Long
     ):
         self.initial_balance      = initial_balance
         self.max_drawdown_usd     = max_drawdown_usd
         self.holding_cost_per_bar = holding_cost_per_bar
         self.opportunity_cost_usd = opportunity_cost_usd
+        self.commission_usd       = commission_usd
+        self.swap_per_night       = swap_per_night
 
-    def on_close(
-        self,
-        pnl:              float,
-        consecutive_hold: int,
-        peak_balance:     float,
-        current_balance:  float,
-    ) -> float:
-        """Reward khi đóng lệnh."""
+    def on_open_commission(self) -> float:
+        """[NEW] Trừ commission cố định khi mở lệnh."""
+        return -self.commission_usd
+
+    def on_midnight_swap(self, is_friday: bool = False) -> float:
+        """[NEW] Trừ swap khi lệnh giữ qua 00:00 server time.
+        Thứ 6 tính x3 (bù cho 2 ngày weekend không có swap rênh).
+        """
+        multiplier = 3 if is_friday else 1
+        return -(self.swap_per_night * multiplier)
+
+    def on_close(self, pnl: float, peak_balance: float, current_balance: float) -> float:
+        """Reward khi đóng lệnh. Commission đã bị trừ khi mở lệnh."""
         reward = pnl
-
-        # Drawdown penalty
         drawdown = peak_balance - current_balance
         if drawdown > self.max_drawdown_usd:
             excess = drawdown - self.max_drawdown_usd
-            reward -= excess * 2.0  # Phạt gấp đôi vượt ngưỡng
-
+            reward -= excess * 2.0
         return reward
 
     def on_hold(
         self,
         consecutive_hold: int,
-        oracle_action:    int = 0,  # 0=Hold, 1=Buy, 2=Sell
+        has_position:     bool = False,   # [FIX] chỉ phạt khi Flat
+        oracle_action:    int  = 0,
     ) -> float:
-        """Reward mỗi timestep Bot đứng im không có vị thế."""
-        reward = -self.holding_cost_per_bar * consecutive_hold
+        """Reward mỗi timestep.
+        - Flat + đứng im: phạt (bot không chịu tham gia thị trường)
+        - Có vị thế + kiên nhẫn giữ: không phạt (thị trường cần thời gian chạy tới TP)
+        """
+        if has_position:
+            return 0.0  # [FIX] Không phạt patience khi giữ lệnh
 
-        # Opportunity cost: Oracle muốn trade nhưng Bot Hold
+        reward = -self.holding_cost_per_bar * consecutive_hold
         if oracle_action in (1, 2):
             reward -= self.opportunity_cost_usd
-
         return reward
 ```
 
