@@ -183,7 +183,7 @@ class RunningMeanStd:
         self.count = epsilon
 
     def update(self, x: torch.Tensor) -> None:
-        """GÃ¡Â»Âi NGOAI ppo_update() Ã¢â‚¬â€ 1 lÃ¡ÂºÂ§n/rollout."""
+        """GÃ¡Â»Â i NGOAI ppo_update() Ã¢â‚¬â€  1 lÃ¡ÂºÂ§n/rollout."""
         v = x.detach().float()
         b_mean, b_var, b_n = v.mean().item(), v.var().item(), v.numel()
         total = self.count + b_n
@@ -194,7 +194,7 @@ class RunningMeanStd:
         self.count  = total
 
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
-        """DÃƒÂ¹ng mean/var Ã„â€˜ÃƒÂ£ Ã¢â‚¬Å“freezeÃ¢â‚¬Â (khÃƒÂ´ng gÃ¡Â»Âi update() trong hÃƒÂ m nÃƒÂ y)."""
+        """DÃƒÂ¹ng mean/var Ã„â€˜ÃƒÂ£ Ã¢â‚¬Å“freezeÃ¢â‚¬Â  (khÃƒÂ´ng gÃ¡Â»Â i update() trong hÃƒÂ m nÃƒÂ y)."""
         return ((x - self.mean) / (self.var ** 0.5 + 1e-8)).clamp(-10.0, 10.0)
 
 def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
@@ -227,6 +227,7 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
     
     # [FIX SHARPE OOS] Dùng Equity thay vì Balance để thấy rõ Unrealized Drawdown
     equity_hist = [200.0]
+    position_hist = [0]
     while not done:
         obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
         with torch.no_grad():
@@ -234,11 +235,12 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
             action = logits.argmax(-1).item()   # deterministic (greedy)
         obs, _, term, trunc, info = env.step(action)
         equity_hist.append(info.get("equity", 200.0))
+        position_hist.append(env._position_dir)
         done = term or trunc
 
     model.train()
     bar_returns = np.diff(equity_hist) / np.array(equity_hist[:-1])
-    metrics = compute_metrics(bar_returns)
+    metrics = compute_metrics(bar_returns, positions=np.array(position_hist))
     return metrics["sharpe"]
 
 
@@ -275,9 +277,9 @@ def ppo_update(
     batch_size = 256,
 ):
     """
-    PPO update vÃ¡Â»â€ºi KL Anchor.
-    Returns Ã„â€˜ÃƒÂ£ Ã„â€˜Ã†Â°Ã¡Â»Â£c chuÃ¡ÂºÂ©n hÃƒÂ³a BÃƒÅ N NGOAI (RunningMeanStd.update() gÃ¡Â»Âi trÃ†Â°Ã¡Â»â€ºc).
-    flat_ret lÃƒÂ  tensor Ã„â€˜ÃƒÂ£ normalize, mean/var freeze trong suÃ¡Â»â€˜t vÃƒÂ²ng lÃ¡ÂºÂ·p.
+    PPO update vÃ¡Â»Âºi KL Anchor.
+    Returns Ã„â€˜ÃƒÂ£ Ã„â€˜Ã†Â°Ã¡Â»Â£c chuÃ¡ÂºÂ©n hÃƒÂ³a BÃƒÅ N NGOAI (RunningMeanStd.update() gÃ¡Â»Â i trÃ†Â°Ã¡Â»Â›c).
+    flat_ret lÃƒÂ  tensor Ã„â€˜ÃƒÂ£ normalize, mean/var freeze trong suÃ¡Â»Â‘t vÃƒÂ²ng lÃ¡ÂºÂ·p.
     """
     T, E = obs.shape[:2]
     flat_obs  = obs.view(T * E, *obs.shape[2:]).to(device)
@@ -309,7 +311,7 @@ def ppo_update(
             # Dùng smooth_l1_loss (Huber Loss) để giới hạn penalty
             vf_loss = F.smooth_l1_loss(value.squeeze(-1), flat_ret[b])
 
-            # KL Anchor Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+            # KL Anchor Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬
             with torch.no_grad():
                 bc_logits, _ = bc_model(flat_obs[b])
             kl_loss = F.kl_div(
@@ -332,15 +334,15 @@ def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info(f"Device: {device}")
 
-    # Ã¢â€â‚¬Ã¢â€â‚¬ Ã„â€˜Ã¡Â»Âc metadata tÃ¡Â»Â« HDF5 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    # Ã¢â€ â‚¬Ã¢â€ â‚¬ Ã„â€˜Ã¡Â»Â c metadata tÃ¡Â»Â« HDF5 Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬
     with h5py.File(args.h5, "r") as f:
         n_total, window_size, n_features = f["X"].shape
     GAP_BARS  = 200  # [FIX] Purged gap giÃ¡Â»Â¯a train vÃƒÂ  OOS
-    split_idx = int(n_total * 0.8) - GAP_BARS  # Train dÃ¡Â»Â«ng trÃ†Â°Ã¡Â»â€ºc gap
+    split_idx = int(n_total * 0.8) - GAP_BARS  # Train dÃ¡Â»Â«ng trÃ†Â°Ã¡Â»Â›c gap
     oos_start = int(n_total * 0.8)              # OOS bÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u sau gap
     log.info(f"Split: train[:{split_idx}] | gap={GAP_BARS} | OOS[{oos_start}:]")
 
-    # Ã¢â€â‚¬Ã¢â€â‚¬ BC Model Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    # Ã¢â€ â‚¬Ã¢â€ â‚¬ BC Model Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬
     ckpt = torch.load(args.bc_ckpt, map_location=device)
     bc_model = XAUTransformer(n_features=n_features, window_size=window_size,
                               d_model=256, n_heads=8, n_layers=6).to(device)
@@ -355,7 +357,7 @@ def train(args):
     ppo_model.load_state_dict(ckpt["model_state"])
     optimizer = optim.AdamW(ppo_model.parameters(), lr=args.lr, weight_decay=1e-4)
 
-    # Ã¢â€â‚¬Ã¢â€â‚¬ [FIX OOM] Envs Ã„â€˜Ã¡Â»Âc HDF5 tÃ¡Â»Â« file, khÃƒÂ´ng copy array Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+    # Ã¢â€ â‚¬Ã¢â€ â‚¬ [FIX OOM] Envs Ã„â€˜Ã¡Â»Â c HDF5 tÃ¡Â»Â« file, khÃƒÂ´ng copy array Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬Ã¢â€ â‚¬
     vec_env = make_async_envs(
         h5_path=args.h5, n_total=n_total,
         split_idx=split_idx, window_size=window_size,
@@ -363,7 +365,7 @@ def train(args):
     )
     log.info(f"{args.n_envs} async envs ready")
 
-    rollout_steps = 2048
+    rollout_steps = 256  # [FIX PPO LOOP] Tăng lên 122 updates thay vì 15 updates
     total_updates = args.total_steps // (rollout_steps * args.n_envs)
     CHECKPOINT_DIR.mkdir(exist_ok=True)
     ret_rms     = RunningMeanStd()
@@ -391,8 +393,8 @@ def train(args):
             log.info(f"Update {update:4d}/{total_updates} | "
                      f"Loss={loss:.4f} | AvgRew={rewards.mean():.4f} | KLÃŽÂ»={kl_coef:.3f}")
 
-        # [FIX] Eval Ã„â€˜Ã¡Â»â€¹nh kÃ¡Â»Â³ trÃƒÂªn OOS Ã¢â‚¬â€ lÃ†Â°u best checkpoint bÃ¡ÂºÂ±ng Sharpe
-        if update % 50 == 0:
+        # [FIX] Eval định kỳ mỗi chu kỳ chẵn (nhanh hơn do update nhiều hơn)       
+        if update % 10 == 0:
             sharpe = evaluate_oos(
                 ppo_model, args.h5, split_idx, n_total,
                 window_size, device, gap_bars=GAP_BARS
@@ -436,7 +438,7 @@ git commit -m "feat(sprint4): PPO CleanRL - AsyncVectorEnv, KL anchor, RMS freez
 ---
 
 
-## Task 2: Backtest &amp; Reporting
+## Task 2: Backtest & Reporting
 
 **Files:**
 - Create: `src/training/backtest.py`
@@ -458,19 +460,19 @@ from src.training.backtest import compute_metrics
 
 class TestBacktestMetrics:
     def test_positive_pnl_series_sharpe_positive(self):
-        """Chuá»—i PnL dÆ°Æ¡ng Ä‘á»u Ä‘áº·n pháº£i cÃ³ Sharpe > 0."""
+        """Chuá»—i PnL dÆ°Æ¡ng Ä‘á» u Ä‘áº·n pháº£i cÃ³ Sharpe > 0."""
         daily_returns = np.array([0.001] * 252)
         metrics = compute_metrics(daily_returns)
         assert metrics["sharpe"] > 0, f"Sharpe pháº£i dÆ°Æ¡ng: {metrics['sharpe']}"
 
     def test_all_zero_returns_sharpe_zero(self):
-        """PnL = 0 má»i ngÃ y â†’ Sharpe = 0."""
+        """PnL = 0 má» i ngÃ y â†’ Sharpe = 0."""
         daily_returns = np.zeros(252)
         metrics = compute_metrics(daily_returns)
 
 
     def test_max_drawdown_is_non_positive(self):
-        """Max drawdown phÃ¡ÂºÂ£i <= 0 (biÃ¡Â»Æ’u diÃ¡Â»â€¦n mÃ¡ÂºÂ¥t vÃ¡Â»â€˜n)."""
+        """Max drawdown phÃ¡ÂºÂ£i <= 0 (biÃ¡Â»Æ’u diÃ¡Â»â€¦n mÃ¡ÂºÂ¥t vÃ¡Â»Â€˜n)."""
         daily_returns = np.array([0.01, -0.05, 0.02, -0.03, 0.01])
         metrics = compute_metrics(daily_returns)
         assert metrics["max_drawdown"] <= 0
@@ -490,7 +492,7 @@ class TestBacktestMetrics:
         assert required.issubset(set(metrics.keys()))
 ```
 
-- [ ] **ChÃ¡ÂºÂ¡y Ã„â€˜Ã¡Â»Æ’ verify FAIL:**
+- [ ] **ChÃ¡ÂºÂ¡y Ã„â€˜Ã¡Â»Âƒ verify FAIL:**
 ```bash
 python -m pytest src/training/tests/test_backtest.py -v
 ```
@@ -502,7 +504,7 @@ python -m pytest src/training/tests/test_backtest.py -v
 backtest.py
 -----------
 Out-of-sample backtest: chÃ¡ÂºÂ¡y model trained qua dÃ¡Â»Â¯ liÃ¡Â»â€¡u chÃ†Â°a thÃ¡ÂºÂ¥y,
-tÃƒÂ­nh cÃƒÂ¡c chÃ¡Â»â€° sÃ¡Â»â€˜ tÃƒÂ i chÃƒÂ­nh chuÃ¡ÂºÂ©n.
+tÃƒÂ­nh cÃƒÂ¡c chÃ¡Â»Â‰ sÃ¡Â»Â‘ tÃƒÂ i chÃƒÂ­nh chuÃ¡ÂºÂ©n.
 
 CÃƒÂ¡ch dÃƒÂ¹ng:
   python src/training/backtest.py \\
@@ -510,7 +512,7 @@ CÃƒÂ¡ch dÃƒÂ¹ng:
       --ckpt    checkpoints/ppo_xauusd.zip \\
       --mode    ppo                         # hoÃ¡ÂºÂ·c bc
 
-ChÃ¡Â»â€° sÃ¡Â»â€˜ output:
+ChÃ¡Â»Â‰ sÃ¡Â»Â‘ output:
   Sharpe Ratio, Sortino Ratio, Max Drawdown, Win Rate, Total Return
 """
 
@@ -530,9 +532,9 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger(__name__)
 
 
-def compute_metrics(daily_returns: np.ndarray, periods_per_year: int = 24192) -> dict:
+def compute_metrics(daily_returns: np.ndarray, periods_per_year: int = 24192, positions: np.ndarray = None) -> dict:
     """
-    TÃƒÂ­nh cÃƒÂ¡c chÃ¡Â»â€° sÃ¡Â»â€˜ tÃƒÂ i chÃƒÂ­nh tÃ¡Â»Â« mÃ¡ÂºÂ£ng daily returns.
+    TÃƒÂ­nh cÃƒÂ¡c chÃ¡Â»Â‰ sÃ¡Â»Â‘ tÃƒÂ i chÃƒÂ­nh tÃ¡Â»Â« mÃ¡ÂºÂ£ng daily returns.
 
     Parameters
     ----------
@@ -573,8 +575,13 @@ def compute_metrics(daily_returns: np.ndarray, periods_per_year: int = 24192) ->
     # Total Return
     total_return = float(cumulative[-1] - 1.0) if n > 0 else 0.0
 
-    # N trades = sÃ¡Â»â€˜ bar cÃƒÂ³ return != 0
-    n_trades = int((r != 0).sum())
+    # [FIX N_TRADES] Thay vì đếm số nến có return != 0 (do Equity nến nào cũng đổi),
+    # đếm số lần position_dir thay đổi để tránh ảo tưởng trade.
+    if positions is not None:
+        pos_diff = np.abs(np.diff(positions))
+        n_trades = int(np.sum(pos_diff > 0)) # Mỗi lần đổi trạng thái là 1 giao dịch
+    else:
+        n_trades = int((r != 0).sum())
 
     return dict(
         sharpe       = round(sharpe,       4),

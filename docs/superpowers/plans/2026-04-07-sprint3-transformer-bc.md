@@ -273,7 +273,9 @@ class XAUTransformer(nn.Module):
         # Mean-pooling sẽ làm loãng thông tin với các token đầu bị mù
         x = x[:, -1, :]                                # (B, d_model)  ← FIX
 
-        return self.policy_head(x), self.value_head(x)
+        # [FIX GRADIENT EARTHQUAKE] Cắt đứt gradient từ Value Head về phần thân Transformer
+        # Ở PPO Phase 2, Value Head ngẫu nhiên => Error siêu lớn. Nếu k detach, nó phá nát Core đã train ở BC.
+        return self.policy_head(x), self.value_head(x.detach())
 
     @staticmethod
     def _build_pos_enc(max_len: int, d_model: int) -> torch.Tensor:
