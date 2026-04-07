@@ -585,8 +585,9 @@ class XAUUSDEnv(gym.Env):
 
             if is_close or is_reversal:
                 # ── Đóng lệnh hiện tại ───────────────────────────────
+                # [FIX EXIT LOOKAHEAD] Đóng lệnh ở giá open nhánh tiếp theo, không dùng current_close!
                 pnl = self._calc_pnl(
-                    self._entry_price, current_close,
+                    self._entry_price, entry_price, # entry_price chính là open_next
                     self._position_dir, self._lot
                 )
                 self._balance         += pnl

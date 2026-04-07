@@ -217,7 +217,7 @@ def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
         spread_pips      = 25,
         lot_size         = 0.01,
         initial_balance  = 200.0,
-        max_drawdown_usd = 999999.0, # [FIX OOS] Vô cực để chạy hết OOS, tránh chết yểu
+        max_drawdown_usd = 20.0, # [FIX EQUITY HOLE] Dừng sớm nếu âm 10% vốn (Luật Prop Firm), tránh chia cho Equity âm
     )
     model.eval()
 

@@ -504,7 +504,7 @@ class H5Dataset(Dataset):
 
 def make_purged_split(
     h5_path:     str,
-    val_ratio:   float = 0.1,
+    val_ratio:   float = 0.2,
     gap_bars:    int   = 100,
     batch_size:  int   = 256,
     num_workers: int   = 0,
@@ -652,7 +652,7 @@ def train(args):
     # ── Data ──────────────────────────────────────────────────────────
     train_loader, val_loader, class_weights = make_purged_split(
         h5_path    = args.h5,
-        val_ratio  = 0.1,
+        val_ratio  = 0.2,
         gap_bars   = 200,
         batch_size = args.batch_size,
     )
