@@ -103,11 +103,30 @@ class TestXAUTransformer:
         assert embedding_weight.grad is not None, "Gradient không đến được embedding layer"
         assert not torch.isnan(embedding_weight.grad).any(), "NaN trong gradient"
 
-    def test_causal_mask_no_future_leakage(self):
+    def test_causal_last_token_only(self):
         """
-        Với causal mask, thay đổi nến tương lai trong window
-        KHÔNG được ảnh hưởng đến output của nến hiện tại.
+        [CRITICAL FIX] Phải dùng x[:, -1, :] (token cuối),
+        KHÔNG dùng x.mean(dim=1) (Global Average Pooling).
+
+        Lý do: Causal Mask đảm bảo token t chỉ nhìn thấy [0..t].
+        Token cuối (t = window-1) là duy nhất tổng hợp được toàn bộ lịch sử.
+        Mean-pooling làm loãng thông tin của nó với các token đầu (bị mù).
         """
+        x = torch.randn(BATCH, WINDOW, N_FEATURES)
+        logits, value = self.model(x)
+        # Verify bằng cách kiểm tra chỉ thay đổi token đầu không ảnh hưởng output
+        x_mod = x.clone()
+        x_mod[:, 0, :] += 999.0  # Thay đổi token đầu tiên
+        with torch.no_grad():
+            logits_mod, _ = self.model(x_mod)
+        # Nếu dùng last-token: thay token 0 không ảnh hưởng output
+        # Nếu dùng mean-pool: thay token 0 SỌ ảnh hưởng output
+        # Test này chỉ pass khi dùng last-token
+        diff = (logits - logits_mod).abs().max().item()
+        assert diff < 1e-4, (
+            f"[FAIL] Đang dùng mean-pool — token đầu ảnh hưởng output: diff={diff:.6f}. "
+            f"Hãy sử lụng x[:, -1, :] thay vì x.mean(dim=1)"
+        )
         x     = torch.randn(1, WINDOW, N_FEATURES)
         x_mod = x.clone()
         x_mod[0, WINDOW//2:, :] += 999.0  # Thay đổi nửa sau (tương lai)
@@ -249,8 +268,10 @@ class XAUTransformer(nn.Module):
         x = self.encoder(x, mask=self.causal_mask,
                          is_causal=True)                # (B, W, d_model)
 
-        # Global Average Pooling (lấy đại diện toàn chuỗi)
-        x = x.mean(dim=1)                              # (B, d_model)
+        # [CRITICAL FIX] Chỉ lấy token cuối cùng
+        # Token W-1 là duy nhất tổng hợp được toàn bộ lịch sử [0..W-1]
+        # Mean-pooling sẽ làm loãng thông tin với các token đầu bị mù
+        x = x[:, -1, :]                                # (B, d_model)  ← FIX
 
         return self.policy_head(x), self.value_head(x)
 

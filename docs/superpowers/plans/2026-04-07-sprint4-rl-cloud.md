@@ -90,11 +90,43 @@ log = logging.getLogger(__name__)
 CHECKPOINT_DIR = Path("checkpoints")
 
 
-def make_envs(X, close_prices, oracle_labels, window_size, n_envs):
+def make_async_envs(
+    X,
+    close_prices,
+    oracle_labels,
+    window_size:  int,
+    n_envs:       int,
+):
     """
-    Tạo danh sách XAUUSDEnv chạy song song trong cùng process.
-    Mỗi env bắt đầu từ một offset khác nhau để đa dạng experience.
+    Tạo AsyncVectorEnv — 64 processes độc lập chạy song song trên CPU.
+    Không dùng list comprehension (sequential) vì sẽ block GPU.
+
+    gymnasium.vector.AsyncVectorEnv đẩy mỗi env sang 1 process riêng,
+    tất cả step() chạy đồng thời → GPU luôn có batch mới để xử lý.
     """
+    from gymnasium.vector import AsyncVectorEnv
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from src.env.xauusd_env import XAUUSDEnv
+
+    n = len(X)
+    def _make_env_fn(i):
+        def _init():
+            offset = (i * 500) % max(1, n - window_size - 2000)
+            return XAUUSDEnv(
+                features         = X[offset:],
+                close_prices     = close_prices[offset:],
+                oracle_labels    = oracle_labels[offset:],
+                window_size      = window_size,
+                spread_pips      = 25,
+                lot_size         = 0.01,
+                initial_balance  = 200.0,
+                max_drawdown_usd = 20.0,
+            )
+        return _init
+
+    return AsyncVectorEnv([_make_env_fn(i) for i in range(n_envs)])
     envs = []
     n = len(X)
     for i in range(n_envs):
@@ -113,17 +145,15 @@ def make_envs(X, close_prices, oracle_labels, window_size, n_envs):
     return envs
 
 
-def collect_rollout(envs, model, device, rollout_steps=2048):
+def collect_rollout(vec_env, model, device, rollout_steps=2048):
     """
-    Thu thập rollout từ tất cả envs song song.
+    Thu thập rollout từ AsyncVectorEnv — tất cả envs step() song song.
     Trả về (obs, actions, log_probs, rewards, dones, values).
     """
-    n_envs = len(envs)
     obs_list, act_list, logp_list, rew_list, done_list, val_list = \
         [], [], [], [], [], []
 
-    # Reset tất cả envs
-    obs = np.array([env.reset()[0] for env in envs])  # (n_envs, W, F)
+    obs, _ = vec_env.reset()
 
     for _ in range(rollout_steps):
         obs_t = torch.tensor(obs, dtype=torch.float32, device=device)  # (E, W, F)
@@ -138,19 +168,12 @@ def collect_rollout(envs, model, device, rollout_steps=2048):
         logp_list.append(logp.cpu())
         val_list.append(value.squeeze(-1).cpu())
 
-        # Step tất cả envs
-        next_obs, rewards, terms, truncs, _ = zip(
-            *[env.step(a.item()) for env, a in zip(envs, action.cpu())]
-        )
-        rew_list.append(torch.tensor(rewards))
-        dones = [t or tr for t, tr in zip(terms, truncs)]
-        done_list.append(torch.tensor(dones, dtype=torch.float32))
-
-        # Reset env nào đã done
-        obs = np.array([
-            env.reset()[0] if done else nobs
-            for env, nobs, done in zip(envs, next_obs, dones)
-        ])
+        # [FIX] AsyncVectorEnv.step() chạy song song trên CPU — không sequential!
+        next_obs, rewards, terms, truncs, _ = vec_env.step(action.cpu().numpy())
+        rew_list.append(torch.tensor(rewards, dtype=torch.float32))
+        dones = torch.tensor(terms | truncs, dtype=torch.float32)
+        done_list.append(dones)
+        obs = next_obs
 
     return (
         torch.stack(obs_list),      # (T, E, W, F)
@@ -161,8 +184,37 @@ def collect_rollout(envs, model, device, rollout_steps=2048):
         torch.stack(val_list),      # (T, E)
     )
 
+class RunningMeanStd:
+    """
+    Nhớ Mean và Std của Returns theo thời gian — duy trì qua các updates.
+    Chuẩn hóa Returns về N(0,1) trước khi tính MSE cho Value Head.
 
-def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
+    Lý do cần thiết: Returns USD biến động -$20 → +$50.
+    Value Head cần dự đoán số không có scale context → Gradient nổ / hội tụ chậm.
+    """
+    def __init__(self, epsilon=1e-8):
+        self.mean  = 0.0
+        self.var   = 1.0
+        self.count = epsilon
+
+    def update(self, x: torch.Tensor):
+        batch_mean = x.mean().item()
+        batch_var  = x.var().item()
+        batch_count = x.numel()
+
+        total  = self.count + batch_count
+        delta  = batch_mean - self.mean
+        self.mean  += delta * batch_count / total
+        self.var    = ((self.var * self.count + batch_var * batch_count +
+                       delta ** 2 * self.count * batch_count / total) / total)
+        self.count  = total
+
+    def normalize(self, x: torch.Tensor) -> torch.Tensor:
+        """Trả về (x - mean) / std, clip [-10, 10] để tránh giá trị cực trị."""
+        return ((x - self.mean) / (self.var ** 0.5 + 1e-8)).clamp(-10, 10)
+
+
+(rewards, values, dones, gamma=0.99, lam=0.95):
     """Generalized Advantage Estimation."""
     T, E = rewards.shape
     advantages = torch.zeros_like(rewards)
@@ -178,31 +230,36 @@ def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
 
 def ppo_update(
     model,
-    bc_model,           # Frozen BC model làm KL anchor
+    bc_model,
     optimizer,
     obs, actions, old_logps, returns, advantages,
     device,
+    ret_normalizer,    # [NEW] RunningMeanStd instance
     clip_eps  = 0.2,
     vf_coef   = 0.5,
     ent_coef  = 0.01,
-    kl_coef   = 0.3,    # KL anchor weight (giảm dần theo schedule)
+    kl_coef   = 0.3,
     n_epochs  = 4,
     batch_size = 256,
 ):
     """
-    PPO update với KL-Divergence Anchor chống Catastrophic Forgetting.
+    PPO update với KL Anchor + [NEW] Return Normalization cho Value Head.
 
-    Total_Loss = PPO_clip + vf_coef * Value_Loss
+    Total_Loss = PPO_clip + vf_coef * MSE(V(s), normalized_returns)
                - ent_coef * Entropy
-               + kl_coef * KL(pi_PPO || pi_BC)   ← chỉ 2 dòng này!
+               + kl_coef * KL(pi_PPO || pi_BC)
     """
     T, E = obs.shape[:2]
     flat_obs  = obs.view(T * E, *obs.shape[2:]).to(device)
     flat_act  = actions.view(-1).to(device)
     flat_logp = old_logps.view(-1).to(device)
-    flat_ret  = returns.view(-1).to(device)
     flat_adv  = advantages.view(-1).to(device)
-    flat_adv  = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)  # Normalize
+    flat_adv  = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)
+
+    # [NEW] Chuẩn hóa Returns trước khi dùng cho Value Head
+    raw_returns  = returns.view(-1)
+    ret_normalizer.update(raw_returns)
+    flat_ret = ret_normalizer.normalize(raw_returns).to(device)
 
     n_samples = T * E
     losses    = []

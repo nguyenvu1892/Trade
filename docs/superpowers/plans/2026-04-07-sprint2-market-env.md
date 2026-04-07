@@ -314,6 +314,36 @@ class TestXAUUSDEnv:
         obs, _ = env.reset()
         assert not np.isnan(obs).any(), "Observation chứa NaN"
 
+    def test_atomic_position_reversal(self):
+        """
+        Đang Long + nhận action Sell → phải đóng Long VÀ mở Short trong cùng 1 step.
+        Không được trở về Flat (mất 15phút chờ cây nến kế tiếp).
+        """
+        env = _make_env()
+        env.reset()
+        # Mở Long
+        env.step(1)
+        assert env._position_dir == 1, "Phải đang Long sau action Buy"
+        # Ngay sau đó, Sell → đóng Long + mở Short ngay
+        env.step(2)
+        assert env._position_dir == -1, (
+            "Sau khi đương Long gặp Sell, phải mở Short ngay (không qua Flat)"
+        )
+
+    def test_reversal_deducts_double_spread(self):
+        """
+        Đảo chiều tạo ra 2 commission (đóng + mở) — spread trừ 2 lần.
+        """
+        env = _make_env()
+        env.reset()
+        balance_before = env._balance
+        env.step(1)  # Mở Long
+        env.step(2)  # Đảo chiều: đóng Long + mở Short
+        # Phải mất ít nhất 2 × commission ($0.07) do 2 lần giao dịch
+        assert env._balance <= balance_before - 0.10, (
+            f"Phải trừ phí đảo chiều, balance: {env._balance:.4f}"
+        )
+
     def test_pnl_calculation_buy(self):
         """
         Mua tại giá X, đóng tại giá X + $10 với 0.01 lot.
@@ -420,43 +450,71 @@ class XAUUSDEnv(gym.Env):
         self._cursor:           int   = window_size
         self._balance:          float = initial_balance
         self._peak_balance:     float = initial_balance
-        self._position_dir:     int   = 0     # 0=flat, 1=long, -1=short
-        self._entry_price:      float = 0.0
-        self._consecutive_hold: int   = 0
-
-    # ── Gymnasium API ──────────────────────────────────────────────────
-
-    def reset(self, seed=None, options=None):
-        super().reset(seed=seed)
-        self._cursor           = self._window
-        self._balance          = self._init_balance
-        self._peak_balance     = self._init_balance
-        self._position_dir     = 0
-        self._entry_price      = 0.0
-        self._consecutive_hold = 0
-        return self._get_obs(), {}
-
-    def step(self, action: int):
-        oracle_action = int(self._oracle[self._cursor])
-        current_price = float(self._close[self._cursor])
-        reward        = 0.0
-        terminated    = False
-
-        # ── Xử lý Action ──────────────────────────────────────────────
+        self._position_dir:     int   = 0     # 0=flat, 1=long, -1=s        # ── Xử lý Action ─────────────────────────────────────────────
         if self._position_dir == 0:
             # Flat: có thể mở lệnh mới
             if action == 1:   # Buy
+                commission = self._reward_calc.on_open_commission()
+                self._balance += commission
                 self._position_dir = 1
                 self._entry_price  = current_price + self._spread_usd
                 self._consecutive_hold = 0
+                reward = commission
             elif action == 2:  # Sell
+                commission = self._reward_calc.on_open_commission()
+                self._balance += commission
                 self._position_dir = -1
                 self._entry_price  = current_price - self._spread_usd
                 self._consecutive_hold = 0
+                reward = commission
             else:  # Hold
                 self._consecutive_hold += 1
-                reward = self._reward_calc.on_hold(self._consecutive_hold, oracle_action)
+                reward = self._reward_calc.on_hold(
+                    self._consecutive_hold,
+                    has_position=False,
+                    oracle_action=oracle_action,
+                )
         else:
+            # Có vị thế: kiểm tra đảo chiều hay giữ tiếp
+            is_reversal = (
+                (self._position_dir == 1  and action == 2) or  # Long + Sell
+                (self._position_dir == -1 and action == 1)     # Short + Buy
+            )
+            is_close = (action == 0)  # Hold = đóng lệnh (tra quy ước)
+
+            if is_close or is_reversal:
+                # ── Đóng lệnh hiện tại ───────────────────────────────
+                pnl = self._calc_pnl(self._entry_price, current_price,
+                                     self._position_dir, self._lot)
+                self._balance                 += pnl
+                self._peak_balance             = max(self._peak_balance, self._balance)
+                reward                         = self._reward_calc.on_close(
+                    pnl, self._peak_balance, self._balance
+                )
+                self._position_dir             = 0
+                self._consecutive_hold         = 0
+
+                if is_reversal:
+                    # ── Mở ngay lệnh ngược chiều trong cùng 1 step [FIX] ──
+                    commission = self._reward_calc.on_open_commission()
+                    self._balance             += commission
+                    reward                    += commission   # Trừ commission đảo chiều
+                    new_dir = 1 if action == 1 else -1
+                    spread_adj = self._spread_usd if new_dir == 1 else -self._spread_usd
+                    self._position_dir         = new_dir
+                    self._entry_price          = current_price + spread_adj
+            else:
+                # Giữ lệnh tiếp — kiểm tra swap qua đêm
+                self._consecutive_hold += 1
+                is_midnight = (self._cursor % 96 == 0)  # M15: 96 nến = 24h
+                is_friday   = (self._get_current_dow() == 4 and is_midnight)
+                swap_r = self._reward_calc.on_midnight_swap(is_friday) if is_midnight else 0.0
+                self._balance += swap_r
+                reward = self._reward_calc.on_hold(
+                    self._consecutive_hold,
+                    has_position=True,
+                    oracle_action=oracle_action,
+                ) + swap_r     else:
             # Có vị thế → đóng khi action = ngược chiều hoặc Hold → tiếp tục giữ
             if (action == 0) or (action == self._position_dir + 1):
                 # Đóng lệnh

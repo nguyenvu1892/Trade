@@ -137,6 +137,51 @@ class TestLogReturns:
         atr = result["atr_norm"].dropna()
         assert (atr > 0).all(), "ATR phải luôn > 0"
 
+    def test_weekend_gap_capped(self):
+        """
+        Gap cuối tuần (XAUUSD tăng +5% sau weekend) phải bị cap
+        — log return không được vượt ngưỡng [-0.05, 0.05].
+        """
+        # Giả lập gap: nến T2 mở cửa tăng 5% so với nến đóng T6
+        idx = pd.date_range("2020-01-03 21:00", periods=5, freq="15min", tz="UTC")
+        # Thêm nến T2 sau 60 giờ ngắt quãng
+        idx_weekend = pd.DatetimeIndex(
+            list(idx) + [pd.Timestamp("2020-01-06 21:00", tz="UTC")]
+        )
+        close = np.array([1800.0, 1801, 1802, 1803, 1804, 1894.0])  # +5% gap
+        df = pd.DataFrame({
+            "open": close + 1, "high": close + 2,
+            "low": close - 1, "close": close,
+            "tick_volume": [1000] * 6,
+        }, index=idx_weekend)
+        proc = DataProcessor(atr_period=3)
+        result = proc.compute_features(df)
+        # Log return của nến gap không được vượt 0.05
+        assert result["log_close"].abs().max() <= 0.051, (
+            f"Gap log return chưa được cap: {result['log_close'].abs().max():.4f}"
+        )
+
+    def test_is_gap_flag_set_after_weekend(self):
+        """
+        is_gap phải bằng 1.0 cho nến ngay sau gap thời gian > 15 phút.
+        """
+        idx = pd.date_range("2020-01-03 21:00", periods=5, freq="15min", tz="UTC")
+        idx_with_gap = pd.DatetimeIndex(
+            list(idx) + [pd.Timestamp("2020-01-06 21:00", tz="UTC")]
+        )
+        close = np.array([1800.0, 1801, 1802, 1803, 1804, 1850.0])
+        df = pd.DataFrame({
+            "open": close + 1, "high": close + 2,
+            "low": close - 1, "close": close,
+            "tick_volume": [1000] * 6,
+        }, index=idx_with_gap)
+        proc = DataProcessor(atr_period=3)
+        result = proc.compute_features(df)
+        # Nến cuối (sau gap 60h) phải có is_gap=1
+        assert result["is_gap"].iloc[-1] == 1.0, (
+            f"is_gap phải là 1 sau weekend gap, nhận: {result['is_gap'].iloc[-1]}"
+        )
+
     def test_warmup_rows_dropped(self):
         """DataProcessor phải tự động bỏ các hàng warmup (NaN) khỏi output."""
         df = _make_ohlcv(200)
@@ -211,13 +256,20 @@ class DataProcessor:
         df = df.copy()
         result = pd.DataFrame(index=df.index)
 
-        # ── Log Returns (khử phi dừng) ────────────────────────────────
+        # ── Log Returns với Gap Detection & Capping ──────────────────
+        # Phát hiện gap thời gian: nến T2 nối nến T6 → khoảng cách > 15 phút
+        time_delta       = df.index.to_series().diff().dt.total_seconds() / 60  # phút
+        gap_mask         = (time_delta > 15).fillna(False)  # True nến ngay sau gap
+        result["is_gap"] = gap_mask.astype(np.float32)
+
         for col in ["open", "high", "low", "close"]:
-            result[f"log_{col}"] = np.log(df[col] / df["close"].shift(1))
+            raw_log = np.log(df[col] / df["close"].shift(1))
+            # Cap [-0.05, 0.05] — tương đương 5% mỗi nến, đủ bắt GAP mà không gây outlier
+            result[f"log_{col}"] = raw_log.clip(-0.05, 0.05)
 
         # Volume: log(vol_t / vol_{t-1}), clip để tránh log(0)
         vol = df["tick_volume"].clip(lower=1)
-        result["log_volume"] = np.log(vol / vol.shift(1))
+        result["log_volume"] = np.log(vol / vol.shift(1)).clip(-3.0, 3.0)
 
         # ── ATR chuẩn hóa ×1000 (tránh gradient vanishing) ──────────
         # ATR/price ≈ 0.001 → quá nhỏ cho Transformer → scale ×1000 → ~1.0
@@ -247,7 +299,6 @@ class DataProcessor:
         result["is_us_session"] = ((hour >= 13) & (hour < 21)).astype(np.float32)
 
         # ── [NEW] Weekend Flag ────────────────────────────────────────
-        # Thứ 7-CN: spread giãn, thanh khoản thấp, gap khi mở cửa T2
         result["is_weekend"] = (dow >= 5).astype(np.float32)
 
         # ── Bỏ warmup rows (NaN do rolling/shift) ─────────────────────
@@ -564,7 +615,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 from src.data.dataset_builder import DatasetBuilder
 
 
-NUM_FEATURES = 12  # log_OHLCV(5) + atr_norm + hour_sin/cos + dow_sin/cos + is_us_session + is_weekend
+NUM_FEATURES = 13  # log_OHLCV(5) + atr_norm + hour_sin/cos + dow_sin/cos + is_us_session + is_weekend + is_gap
 
 
 def _make_feature_df(n: int = 300) -> pd.DataFrame:
