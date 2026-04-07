@@ -966,42 +966,6 @@ if __name__ == "__main__":
 - [ ] **Commit:**
 ```bash
 git add src/training/train_rl.py
-git commit -m "feat(sprint4): PPO training loop - vectorized envs, KL anchor, BC checkpoint loading"
-```
-
----
-
-## Task 2: Backtest & Reporting
-
-**Files:**
-- Create: `src/training/backtest.py`
-- Create: `src/training/tests/test_backtest.py`
-
-### Step 2.1: Test backtest metrics
-
-- [ ] **Tạo `src/training/tests/test_backtest.py`:**
-
-```python
-# src/training/tests/test_backtest.py
-import numpy as np
-import pytest
-import sys
-from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
-from src.training.backtest import compute_metrics
-
-
-class TestBacktestMetrics:
-    def test_positive_pnl_series_sharpe_positive(self):
-        """Chuỗi PnL dương đều đặn phải có Sharpe > 0."""
-        daily_returns = np.array([0.001] * 252)  # +0.1%/ngày
-        metrics = compute_metrics(daily_returns)
-        assert metrics["sharpe"] > 0, f"Sharpe phải dương: {metrics['sharpe']}"
-
-    def test_all_zero_returns_sharpe_zero(self):
-        """PnL = 0 mọi ngày → Sharpe = 0."""
-        daily_returns = np.zeros(252)
-        metrics = compute_metrics(daily_returns)
         assert metrics["sharpe"] == 0.0
 
     def test_max_drawdown_is_non_positive(self):
@@ -1189,17 +1153,19 @@ git commit -m "feat(sprint4): backtest - compute_metrics Sharpe/Sortino/MaxDD/Wi
 - [ ] **Tạo `Dockerfile`:**
 
 ```dockerfile
-# XAUUSD AI Trading Bot — Training Container
+# XAUUSD AI Trading Bot — Training Container (Phase 2: PPO)
 # Tối ưu cho RTX 4090 / RTX 5090 trên Vast.ai
+# [FIX] Phase 2 (PPO) dùng AsyncVectorEnv — cần CPU đa luồng mạnh,
+# không chạy BC (Phase 1) vì BC đã xong rồi!
 
 FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 
 WORKDIR /workspace
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \
-    git \
-    htop \
+RUN apt-get update && apt-get install -y \\
+    git \\
+    htop \\
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements và install
@@ -1213,57 +1179,71 @@ COPY data/ ./data/
 # Tạo thư mục output
 RUN mkdir -p checkpoints logs
 
-# Default command: BC training
-CMD ["python", "src/training/train_bc.py", \
-     "--h5", "data/processed/XAUUSD_M15_w128.h5", \
-     "--epochs", "100", \
-     "--batch-size", "512"]
+# [FIX] CMD chạy PPO (Phase 2), không phải BC (Phase 1)
+# BC checkpoint truyền vào qua --bc-ckpt khi docker run
+CMD ["python", "src/training/train_rl.py", \\
+     "--h5",          "data/processed/XAUUSD_M15_w128.h5", \\
+     "--bc-ckpt",     "checkpoints/best_model_bc.pt", \\
+     "--n-envs",      "64", \\
+     "--total-steps", "2000000"]
 ```
 
 - [ ] **Tạo `scripts/vast_launch.sh`:**
 
 ```bash
 #!/bin/bash
-# vast_launch.sh — Triển khai training lên Vast.ai instance
-# Cách dùng: ./scripts/vast_launch.sh <INSTANCE_ID> <SSH_KEY_PATH>
+# vast_launch.sh — Triển khai PPO training (Phase 2) lên Vast.ai instance
+# [FIX] Chạy train_rl.py (PPO), không phải train_bc.py (BC đã xong ở local)
+# Cách dùng: ./scripts/vast_launch.sh <INSTANCE_ID> <SSH_KEY_PATH> <BC_CKPT_PATH>
 #
-# Yêu cầu: vast CLI đã cài (pip install vastai)
-# Trước khi chạy: vastai set api-key <YOUR_API_KEY>
+# Workflow:
+#   1. Upload source + HDF5 data + BC checkpoint lên server
+#   2. Launch PPO training dùng AsyncVectorEnv (64 envs)
+#   3. Checkpoint ppo_best.pt tự động lưu khi Sharpe OOS tốt hơn
 
 set -e
 
-INSTANCE_ID=${1:?"Usage: $0 <instance_id> <ssh_key>"}
-SSH_KEY=${2:?"Usage: $0 <instance_id> <ssh_key>"}
+INSTANCE_ID=${1:?"Usage: $0 <instance_id> <ssh_key> <bc_ckpt>"}
+SSH_KEY=${2:?"Usage: $0 <instance_id> <ssh_key> <bc_ckpt>"}
+BC_CKPT=${3:-"checkpoints/best_model_bc.pt"}
 
-echo "=== XAUUSD Bot — Vast.ai Deployment ==="
+echo "=== XAUUSD Bot — Vast.ai PPO Deployment ==="
 echo "Instance: $INSTANCE_ID"
+echo "BC Checkpoint: $BC_CKPT"
 
 # 1. Lấy connection info
 CONN=$(vastai ssh-url $INSTANCE_ID)
 SSH_HOST=$(echo $CONN | sed 's/ssh:\/\///')
 
-# 2. Rsync source code lên instance
+# 2. Rsync source code + data + BC checkpoint lên instance
 echo "Uploading source code..."
-rsync -avz --exclude '.git' --exclude '__pycache__' \
-    -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
+rsync -avz --exclude '.git' --exclude '__pycache__' \\
+    -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \\
     ./ root@${SSH_HOST}:/workspace/
+
+# Upload BC checkpoint riêng nếu nằm ngoài workspace
+if [ -f "$BC_CKPT" ]; then
+    scp -i $SSH_KEY $BC_CKPT root@${SSH_HOST}:/workspace/checkpoints/best_model_bc.pt
+    echo "BC checkpoint uploaded."
+fi
 
 # 3. Install dependencies
 echo "Installing dependencies..."
-ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \
+ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
     "cd /workspace && pip install -q -r requirements.txt"
 
-# 4. Launch BC training (background với nohup)
-echo "Starting BC training..."
-ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \
-    "cd /workspace && nohup python src/training/train_bc.py \
-        --h5 data/processed/XAUUSD_M15_w128.h5 \
-        --epochs 100 \
-        --batch-size 512 \
-        > logs/train_bc.log 2>&1 &"
+# 4. [FIX] Launch PPO training (Phase 2) — không phải BC!
+echo "Starting PPO RL training (Phase 2)..."
+ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
+    "cd /workspace && nohup python src/training/train_rl.py \\
+        --h5          data/processed/XAUUSD_M15_w128.h5 \\
+        --bc-ckpt     checkpoints/best_model_bc.pt \\
+        --n-envs      64 \\
+        --total-steps 2000000 \\
+        > logs/train_rl.log 2>&1 &"
 
-echo "✅ Training started! Theo dõi log:"
-echo "   ssh -i $SSH_KEY root@${SSH_HOST} 'tail -f /workspace/logs/train_bc.log'"
+echo "✅ PPO training started! Theo dõi log:"
+echo "   ssh -i $SSH_KEY root@${SSH_HOST} 'tail -f /workspace/logs/train_rl.log'"
 ```
 
 - [ ] **Tạo `scripts/pull_results.sh`:**
