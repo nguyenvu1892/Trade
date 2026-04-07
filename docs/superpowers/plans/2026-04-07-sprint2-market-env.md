@@ -242,39 +242,75 @@ WINDOW = 64
 N_FEATURES = 10
 
 
-def _make_env(n_bars: int = 500) -> XAUUSDEnv:
-    """Tạo môi trường test với dữ liệu giả."""
+def _make_env_2d(n_bars: int = 500) -> XAUUSDEnv:
+    """
+    Môi trường test dùng features 2D (T, F) — dữ liệu raw chưa window hóa.
+    Dùng cho unit test cơ bản, cursor bắt đầu từ WINDOW.
+    """
     np.random.seed(42)
-    idx = pd.date_range("2020-01-01", periods=n_bars, freq="15min", tz="UTC")
-
-    # Feature matrix (normalized)
-    features = np.random.randn(n_bars, N_FEATURES).astype(np.float32) * 0.001
-
-    # Giá close thực (để tính PnL)
-    close_prices = 1800.0 + np.cumsum(np.random.randn(n_bars))
-
-    # Oracle labels
+    close_prices  = 1800.0 + np.cumsum(np.random.randn(n_bars))
+    open_next     = close_prices + np.random.randn(n_bars) * 0.2  # gap nhỏ
+    features      = np.random.randn(n_bars, N_FEATURES).astype(np.float32) * 0.001
     oracle_labels = np.random.choice([0, 1, 2], size=n_bars, p=[0.9, 0.05, 0.05])
-
     return XAUUSDEnv(
-        features      = features,
-        close_prices  = close_prices,
-        oracle_labels = oracle_labels,
-        window_size   = WINDOW,
-        spread_pips   = 30,       # 30 pips spread ≈ $0.30 với 0.01 lot
-        lot_size      = 0.01,
-        initial_balance = 200.0,
+        features         = features,
+        close_prices     = close_prices,
+        open_next_prices = open_next,
+        oracle_labels    = oracle_labels,
+        window_size      = WINDOW,
+        spread_pips      = 30,
+        lot_size         = 0.01,
+        initial_balance  = 200.0,
         max_drawdown_usd = 20.0,
     )
 
 
+def _make_env_3d(n_windows: int = 436) -> XAUUSDEnv:
+    """
+    [KEY TEST] Môi trường dùng features 3D (N_windows, WINDOW, F) —
+    mô phỏng CHÍNH XÁC shape HDF5 từ DatasetBuilder.
+    cursor bắt đầu từ 0, _get_obs() trả về self._features[cursor] trực tiếp.
+    """
+    np.random.seed(7)
+    features_3d   = np.random.randn(n_windows, WINDOW, N_FEATURES).astype(np.float32)
+    close_prices  = 1800.0 + np.cumsum(np.random.randn(n_windows))
+    open_next     = close_prices + np.random.randn(n_windows) * 0.2
+    oracle_labels = np.random.choice([0, 1, 2], size=n_windows, p=[0.9, 0.05, 0.05])
+    return XAUUSDEnv(
+        features         = features_3d,
+        close_prices     = close_prices,
+        open_next_prices = open_next,
+        oracle_labels    = oracle_labels,
+        window_size      = WINDOW,
+        spread_pips      = 30,
+        lot_size         = 0.01,
+        initial_balance  = 200.0,
+        max_drawdown_usd = 20.0,
+    )
+
+
+# Alias backward compatible
+_make_env = _make_env_2d
+
+
 class TestXAUUSDEnv:
-    def test_reset_returns_correct_obs_shape(self):
-        """reset() phải trả về observation shape đúng (window, n_features)."""
-        env = _make_env()
+    def test_reset_returns_correct_obs_shape_2d(self):
+        """2D features: reset() phải trả về shape (WINDOW, N_FEATURES)."""
+        env = _make_env_2d()
         obs, info = env.reset()
         assert obs.shape == (WINDOW, N_FEATURES), (
             f"Obs shape kỳ vọng ({WINDOW}, {N_FEATURES}), nhận {obs.shape}"
+        )
+
+    def test_reset_returns_correct_obs_shape_3d(self):
+        """
+        [KEY] 3D features từ HDF5: reset() phải trả về shape (WINDOW, N_FEATURES).
+        cursor = 0, _get_obs() = features[0] trực tiếp (không slice).
+        """
+        env = _make_env_3d()
+        obs, info = env.reset()
+        assert obs.shape == (WINDOW, N_FEATURES), (
+            f"[3D env] Obs shape kỳ vọng ({WINDOW}, {N_FEATURES}), nhận {obs.shape}"
         )
 
     def test_action_space_correct(self):
@@ -423,26 +459,40 @@ class XAUUSDEnv(gym.Env):
 
     def __init__(
         self,
-        features:         np.ndarray,   # shape (T, n_features) float32  ← 2D!
-        close_prices:     np.ndarray,   # shape (T,) — giá Close tuyệt đối USD
-        oracle_labels:    np.ndarray,   # shape (T,) — nhãn Oracle [0,1,2]
-        window_size:      int   = 128,
-        spread_pips:      int   = 25,
-        lot_size:         float = 0.01,
-        initial_balance:  float = 200.0,
-        max_drawdown_usd: float = 20.0,
+        features:          np.ndarray,   # 2D (T, F) hoặc 3D (N, W, F) float32
+        close_prices:      np.ndarray,   # shape (T,) hoặc (N,) — giá Close tuyệt đối USD
+        open_next_prices:  np.ndarray,   # shape (T,) hoặc (N,) — [FIX LOOKAHEAD]
+                                         # Giá Open nến kế tiếp — điểm thực tế khớp lệnh
+        oracle_labels:     np.ndarray,   # shape (T,) hoặc (N,) — nhãn Oracle [0,1,2]
+        window_size:       int   = 128,
+        spread_pips:       int   = 25,
+        lot_size:          float = 0.01,
+        initial_balance:   float = 200.0,
+        max_drawdown_usd:  float = 20.0,
     ):
         super().__init__()
-        self._features      = features
-        self._close         = close_prices
-        self._oracle        = oracle_labels
-        self._window        = window_size
-        self._spread_usd    = spread_pips * lot_size / 100.0  # đơn giản hóa
-        self._lot           = lot_size
-        self._init_balance  = initial_balance
-        self._max_dd        = max_drawdown_usd
 
-        n_features = features.shape[1]
+        # [FIX] Dual-mode: tự detect 2D vs 3D input
+        assert features.ndim in (2, 3), (
+            f"features phải là 2D (T,F) hoặc 3D (N,W,F), nhận: {features.shape}"
+        )
+        self._is_prewindowed = (features.ndim == 3)  # True nếu lấy HDF5
+        self._features       = features
+        self._close          = close_prices
+        self._open_next      = open_next_prices       # [FIX LOOKAHEAD]
+        self._oracle         = oracle_labels
+        self._window         = window_size
+        self._spread_usd     = spread_pips * lot_size / 100.0
+        self._lot            = lot_size
+        self._init_balance   = initial_balance
+        self._max_dd         = max_drawdown_usd
+
+        if self._is_prewindowed:
+            # 3D: (N_windows, W, F) — mỗi sample là 1 cửa sổ hoàn chỉnh
+            n_features = features.shape[2]
+        else:
+            # 2D: (T, F) — môi trường tự tạo window bằng slice
+            n_features = features.shape[1]
 
         self.observation_space = spaces.Box(
             low=-np.inf, high=np.inf,
@@ -459,18 +509,18 @@ class XAUUSDEnv(gym.Env):
         )
 
         # State variables — reset trong reset()
-        self._cursor:           int   = window_size
+        self._cursor:           int   = 0
         self._balance:          float = initial_balance
         self._peak_balance:     float = initial_balance
         self._position_dir:     int   = 0      # 0=flat, 1=long, -1=short
         self._entry_price:      float = 0.0
         self._consecutive_hold: int   = 0
 
-    # ── Gymnasium API ─────────────────────────────────────────────────
-
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self._cursor           = self._window
+        # [FIX] 3D pre-windowed: cursor bắt đầu từ 0 (cửa sổ đầu tiên)
+        # 2D raw:             cursor bắt đầu từ window_size (đủ dữ liệu lịch sử)
+        self._cursor           = 0 if self._is_prewindowed else self._window
         self._balance          = self._init_balance
         self._peak_balance     = self._init_balance
         self._position_dir     = 0
@@ -479,27 +529,29 @@ class XAUUSDEnv(gym.Env):
         return self._get_obs(), {}
 
     def step(self, action: int):
-        # [FIX] Lấy giá và oracle — phải định nghĩa trước khi dùng
-        current_price = float(self._close[self._cursor])
+        # [FIX LOOKAHEAD] Dùng giá Close nến hiện tại chỉ để tham khảo.
+        # Lệnh thực tế khớp tại giá OPEN của nến KẾ TIẾP (open_next).
+        current_close = float(self._close[self._cursor])       # dùng để đóng lệnh
+        entry_price   = float(self._open_next[self._cursor])   # [FIX] khớp tại open+1
         oracle_action = int(self._oracle[self._cursor])
         reward        = 0.0
         terminated    = False
 
-        # ── Xử lý Action ──────────────────────────────────────────────
+        # ── Xử lý Action ─────────────────────────────────────────────
         if self._position_dir == 0:
             # Flat: có thể mở lệnh mới
             if action == 1:   # Buy
                 commission             = self._reward_calc.on_open_commission()
                 self._balance         += commission
                 self._position_dir     = 1
-                self._entry_price      = current_price + self._spread_usd
+                self._entry_price      = entry_price + self._spread_usd
                 self._consecutive_hold = 0
                 reward                 = commission
             elif action == 2:  # Sell
                 commission             = self._reward_calc.on_open_commission()
                 self._balance         += commission
                 self._position_dir     = -1
-                self._entry_price      = current_price - self._spread_usd
+                self._entry_price      = entry_price - self._spread_usd
                 self._consecutive_hold = 0
                 reward                 = commission
             else:  # Hold khi Flat — phạt đứng im
@@ -520,7 +572,7 @@ class XAUUSDEnv(gym.Env):
             if is_close or is_reversal:
                 # ── Đóng lệnh hiện tại ───────────────────────────────
                 pnl = self._calc_pnl(
-                    self._entry_price, current_price,
+                    self._entry_price, current_close,
                     self._position_dir, self._lot
                 )
                 self._balance         += pnl
@@ -568,9 +620,16 @@ class XAUUSDEnv(gym.Env):
     # ── Helpers ────────────────────────────────────────────────────────
 
     def _get_obs(self) -> np.ndarray:
-        """[FIX] features là 2D (T, F) — slice window bình thường."""
-        start = self._cursor - self._window
-        return self._features[start:self._cursor].copy()
+        """
+        [FIX DUAL-MODE]
+        - 3D pre-windowed (HDF5): trả là features[cursor] trực tiếp — (W, F)
+        - 2D raw            : slice features[cursor-W : cursor] — (W, F)
+        """
+        if self._is_prewindowed:
+            return self._features[self._cursor].copy()          # 3D mode
+        else:
+            start = self._cursor - self._window
+            return self._features[start:self._cursor].copy()    # 2D mode
 
     def _get_current_dow(self) -> int:
         """Ngày trong tuần (0=Mon, 4=Fri) — ước tính từ cursor."""

@@ -1,15 +1,15 @@
-# XAUUSD Bot â€” Sprint 4: RL Fine-tuning & Cloud Scale-up (Phase 2)
+﻿# XAUUSD Bot Ã¢â‚¬â€ Sprint 4: RL Fine-tuning & Cloud Scale-up (Phase 2)
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Fine-tune model BC báº±ng PPO Reinforcement Learning (CleanRL) â€” tá»‘i Æ°u Drawdown, Sharpe, Win Rate trÃªn out-of-sample. ÄÃ³ng gÃ³i Docker Ä‘á»ƒ triá»ƒn khai lÃªn Vast.ai GPU server.
+**Goal:** Fine-tune model BC bÃ¡ÂºÂ±ng PPO Reinforcement Learning (CleanRL) Ã¢â‚¬â€ tÃ¡Â»â€˜i Ã†Â°u Drawdown, Sharpe, Win Rate trÃƒÂªn out-of-sample. Ã„ÂÃƒÂ³ng gÃƒÂ³i Docker Ã„â€˜Ã¡Â»Æ’ triÃ¡Â»Æ’n khai lÃƒÂªn Vast.ai GPU server.
 
-**Architecture:** Load `best_model_bc.pt` â†’ sá»­ dá»¥ng **CleanRL** (khÃ´ng dÃ¹ng SB3) â€” toÃ n bá»™ loss logic trong 1 file duy nháº¥t, dá»… Ä‘á»c vÃ  chá»‰nh sá»­a. Transformer Ä‘Æ°á»£c nhÃºng trá»±c tiáº¿p vÃ o PPO actor-critic, khÃ´ng bá»‹ flatten. KL-Divergence anchor chá»‘ng Catastrophic Forgetting Ä‘Æ°á»£c chÃ¨n tháº³ng vÃ o training loop chá»‰ 2 dÃ²ng toÃ¡n há»c.
+**Architecture:** Load `best_model_bc.pt` Ã¢â€ â€™ sÃ¡Â»Â­ dÃ¡Â»Â¥ng **CleanRL** (khÃƒÂ´ng dÃƒÂ¹ng SB3) Ã¢â‚¬â€ toÃƒÂ n bÃ¡Â»â„¢ loss logic trong 1 file duy nhÃ¡ÂºÂ¥t, dÃ¡Â»â€¦ Ã„â€˜Ã¡Â»Âc vÃƒÂ  chÃ¡Â»â€°nh sÃ¡Â»Â­a. Transformer Ã„â€˜Ã†Â°Ã¡Â»Â£c nhÃƒÂºng trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p vÃƒÂ o PPO actor-critic, khÃƒÂ´ng bÃ¡Â»â€¹ flatten. KL-Divergence anchor chÃ¡Â»â€˜ng Catastrophic Forgetting Ã„â€˜Ã†Â°Ã¡Â»Â£c chÃƒÂ¨n thÃ¡ÂºÂ³ng vÃƒÂ o training loop chÃ¡Â»â€° 2 dÃƒÂ²ng toÃƒÂ¡n hÃ¡Â»Âc.
 
-**LÃ½ do KHÃ”NG dÃ¹ng Stable-Baselines3 (SB3):**
-- SB3 máº·c Ä‘á»‹nh **flatten** input 2D `(128, 12)` thÃ nh `(1536,)` trÆ°á»›c khi Ä‘Æ°a vÃ o máº¡ng â€” phÃ¡ vá»¡ cáº¥u trÃºc thá»i gian cá»§a Transformer hoÃ n toÃ n.
-- Viá»‡c hack SB3 Ä‘á»ƒ thÃªm KL Penalty loss tÃ¹y chá»‰nh Ä‘Ã²i há»i monkey-patch ráº¥t phá»©c táº¡p vÃ  dá»… gÃ¢y regression.
-- CleanRL giáº£i quyáº¿t cáº£ 2 váº¥n Ä‘á» chá»‰ vá»›i 2 dÃ²ng code.
+**LÃƒÂ½ do KHÃƒâ€NG dÃƒÂ¹ng Stable-Baselines3 (SB3):**
+- SB3 mÃ¡ÂºÂ·c Ã„â€˜Ã¡Â»â€¹nh **flatten** input 2D `(128, 12)` thÃƒÂ nh `(1536,)` trÃ†Â°Ã¡Â»â€ºc khi Ã„â€˜Ã†Â°a vÃƒÂ o mÃ¡ÂºÂ¡ng Ã¢â‚¬â€ phÃƒÂ¡ vÃ¡Â»Â¡ cÃ¡ÂºÂ¥u trÃƒÂºc thÃ¡Â»Âi gian cÃ¡Â»Â§a Transformer hoÃƒÂ n toÃƒÂ n.
+- ViÃ¡Â»â€¡c hack SB3 Ã„â€˜Ã¡Â»Æ’ thÃƒÂªm KL Penalty loss tÃƒÂ¹y chÃ¡Â»â€°nh Ã„â€˜ÃƒÂ²i hÃ¡Â»Âi monkey-patch rÃ¡ÂºÂ¥t phÃ¡Â»Â©c tÃ¡ÂºÂ¡p vÃƒÂ  dÃ¡Â»â€¦ gÃƒÂ¢y regression.
+- CleanRL giÃ¡ÂºÂ£i quyÃ¡ÂºÂ¿t cÃ¡ÂºÂ£ 2 vÃ¡ÂºÂ¥n Ã„â€˜Ã¡Â»Â chÃ¡Â»â€° vÃ¡Â»â€ºi 2 dÃƒÂ²ng code.
 
 **Tech Stack:** PyTorch, CleanRL (single-file PPO), gymnasium, Docker, quantstats, pytest
 
@@ -19,45 +19,45 @@
 
 ```
 src/training/
-â”œâ”€â”€ train_rl.py              [NEW] â€” CleanRL PPO single-file + KL anchor + Transformer
-â”œâ”€â”€ backtest.py              [NEW] â€” Out-of-sample evaluation & report
-â””â”€â”€ tests/
-    â””â”€â”€ test_backtest.py     [NEW]
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ train_rl.py              [NEW] Ã¢â‚¬â€ CleanRL PPO single-file + KL anchor + Transformer
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ backtest.py              [NEW] Ã¢â‚¬â€ Out-of-sample evaluation & report
+Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ tests/
+    Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ test_backtest.py     [NEW]
 
-Dockerfile                   [NEW] â€” Container cho Vast.ai
+Dockerfile                   [NEW] Ã¢â‚¬â€ Container cho Vast.ai
 scripts/
-â”œâ”€â”€ vast_launch.sh           [NEW] â€” Script khá»Ÿi Ä‘á»™ng training trÃªn Vast.ai
-â””â”€â”€ pull_results.sh          [NEW] â€” Script kÃ©o káº¿t quáº£ vá» local
+Ã¢â€Å“Ã¢â€â‚¬Ã¢â€â‚¬ vast_launch.sh           [NEW] Ã¢â‚¬â€ Script khÃ¡Â»Å¸i Ã„â€˜Ã¡Â»â„¢ng training trÃƒÂªn Vast.ai
+Ã¢â€â€Ã¢â€â‚¬Ã¢â€â‚¬ pull_results.sh          [NEW] Ã¢â‚¬â€ Script kÃƒÂ©o kÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ vÃ¡Â»Â local
 ```
 
 ---
 
-## Task 1: PPO Training vá»›i KL-Divergence Anchor
+## Task 1: PPO Training vÃ¡Â»â€ºi KL-Divergence Anchor
 
 **Files:**
 - Create: `src/training/train_rl.py`
 
 ### Step 1.1: Implement train_rl.py (CleanRL style)
 
-> âš ï¸ **KhÃ´ng dÃ¹ng SB3.** DÃ¹ng CleanRL approach: tÃ i PPO thá»¥ cÃ´ng trong 1 file, chÃ¨n Transformer vÃ  KL Anchor trá»±c tiáº¿p.
+> Ã¢Å¡Â Ã¯Â¸Â **KhÃƒÂ´ng dÃƒÂ¹ng SB3.** DÃƒÂ¹ng CleanRL approach: tÃƒÂ i PPO thÃ¡Â»Â¥ cÃƒÂ´ng trong 1 file, chÃƒÂ¨n Transformer vÃƒÂ  KL Anchor trÃ¡Â»Â±c tiÃ¡ÂºÂ¿p.
 
-- [ ] **Táº¡o `src/training/train_rl.py`:**
+- [ ] **TÃ¡ÂºÂ¡o `src/training/train_rl.py`:**
 
 ```python
 """
-train_rl.py  (CleanRL-style â€” v3, fixed)
+train_rl.py  (CleanRL-style Ã¢â‚¬â€ v3, fixed)
 -----------------------------------------
 Phase 2: PPO Reinforcement Learning Fine-tuning.
 
 Fix log:
   v1: initial CleanRL draft
-  v2: AsyncVectorEnv Ä‘á»ƒ song song hÃ³a CPU
-  v3: [FIX OOM] DÃ¹ng h5_path + offset thay vÃ¬ truyá»n raw array
-      [FIX SYN] compute_gae thiáº¿u 'def'
-      [FIX DC]  XÃ³a dead code sau return trong make_async_envs
-      [FIX RMS] Freeze RunningMeanStd trong PPO epochs, chá»‰ update 1 láº§n/rollout
+  v2: AsyncVectorEnv Ã„â€˜Ã¡Â»Æ’ song song hÃƒÂ³a CPU
+  v3: [FIX OOM] DÃƒÂ¹ng h5_path + offset thay vÃƒÂ¬ truyÃ¡Â»Ân raw array
+      [FIX SYN] compute_gae thiÃ¡ÂºÂ¿u 'def'
+      [FIX DC]  XÃƒÂ³a dead code sau return trong make_async_envs
+      [FIX RMS] Freeze RunningMeanStd trong PPO epochs, chÃ¡Â»â€° update 1 lÃ¡ÂºÂ§n/rollout
 
-CÃ¡ch dÃ¹ng:
+CÃƒÂ¡ch dÃƒÂ¹ng:
   python src/training/train_rl.py \\\
       --h5      data/processed/XAUUSD_M15_w128.h5 \\\
       --bc-ckpt checkpoints/best_model_bc.pt \\\
@@ -94,13 +94,13 @@ CHECKPOINT_DIR = Path("checkpoints")
 def make_async_envs(
     h5_path:      str,
     n_total:      int,
-    split_idx:    int,    # ÄÃ£ bao gá»“m purged gap bÃªn trong
+    split_idx:    int,    # Ã„ÂÃƒÂ£ bao gÃ¡Â»â€œm purged gap bÃƒÂªn trong
     window_size:  int,
     n_envs:       int,
 ):
     """
-    [FIX OOM] Truyá»n h5_path + offset, khÃ´ng truyá»n raw array.
-    Má»—i worker tá»± Ä‘á»c HDF5 (cáº£ X, y, vÃ  CLOSE) trong process riÃªng.
+    [FIX OOM] TruyÃ¡Â»Ân h5_path + offset, khÃƒÂ´ng truyÃ¡Â»Ân raw array.
+    MÃ¡Â»â€”i worker tÃ¡Â»Â± Ã„â€˜Ã¡Â»Âc HDF5 (cÃ¡ÂºÂ£ X, y, vÃƒÂ  CLOSE) trong process riÃƒÂªng.
     """
     def _make_env_fn(offset: int):
         def _init():
@@ -128,8 +128,8 @@ def make_async_envs(
 
 def collect_rollout(vec_env, model, device, rollout_steps=2048):
     """
-    Thu tháº­p rollout tá»« AsyncVectorEnv â€” táº¥t cáº£ envs step() song song.
-    Tráº£ vá» (obs, actions, log_probs, rewards, dones, values).
+    Thu thÃ¡ÂºÂ­p rollout tÃ¡Â»Â« AsyncVectorEnv Ã¢â‚¬â€ tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ envs step() song song.
+    TrÃ¡ÂºÂ£ vÃ¡Â»Â (obs, actions, log_probs, rewards, dones, values).
     """
     obs_list, act_list, logp_list, rew_list, done_list, val_list = \
         [], [], [], [], [], []
@@ -166,12 +166,12 @@ def collect_rollout(vec_env, model, device, rollout_steps=2048):
 
 class RunningMeanStd:
     """
-    [FIX RMS] Chá»‰ update 1 láº§n SAU má»—i rollout â€” freeze trong suá»‘t PPO epochs.
+    [FIX RMS] ChÃ¡Â»â€° update 1 lÃ¡ÂºÂ§n SAU mÃ¡Â»â€”i rollout Ã¢â‚¬â€ freeze trong suÃ¡Â»â€˜t PPO epochs.
 
-    LÃ½ do: Náº¿u update trong má»—i mini-batch, 'target' cá»§a Value Head thay Ä‘á»•i
-    liÃªn tá»¥c (Non-stationary target) â†’ Value Head há»c ráº¥t cháº­m / khÃ´ng há»™i tá»¥.
-    Giáº£i phÃ¡p: Gá»i ret_rms.update() 1 láº§n trÆ°á»›c ppo_update(),
-    rá»“i dÃ¹ng mean/var Ä‘Ã£ freeze cho cáº£ 4 epochs cá»§a PPO.
+    LÃƒÂ½ do: NÃ¡ÂºÂ¿u update trong mÃ¡Â»â€”i mini-batch, 'target' cÃ¡Â»Â§a Value Head thay Ã„â€˜Ã¡Â»â€¢i
+    liÃƒÂªn tÃ¡Â»Â¥c (Non-stationary target) Ã¢â€ â€™ Value Head hÃ¡Â»Âc rÃ¡ÂºÂ¥t chÃ¡ÂºÂ­m / khÃƒÂ´ng hÃ¡Â»â„¢i tÃ¡Â»Â¥.
+    GiÃ¡ÂºÂ£i phÃƒÂ¡p: GÃ¡Â»Âi ret_rms.update() 1 lÃ¡ÂºÂ§n trÃ†Â°Ã¡Â»â€ºc ppo_update(),
+    rÃ¡Â»â€œi dÃƒÂ¹ng mean/var Ã„â€˜ÃƒÂ£ freeze cho cÃ¡ÂºÂ£ 4 epochs cÃ¡Â»Â§a PPO.
     """
     def __init__(self, epsilon: float = 1e-8):
         self.mean  = 0.0
@@ -179,7 +179,7 @@ class RunningMeanStd:
         self.count = epsilon
 
     def update(self, x: torch.Tensor) -> None:
-        """Gá»i NGOAI ppo_update() â€” 1 láº§n/rollout."""
+        """GÃ¡Â»Âi NGOAI ppo_update() Ã¢â‚¬â€ 1 lÃ¡ÂºÂ§n/rollout."""
         v = x.detach().float()
         b_mean, b_var, b_n = v.mean().item(), v.var().item(), v.numel()
         total = self.count + b_n
@@ -190,46 +190,55 @@ class RunningMeanStd:
         self.count  = total
 
     def normalize(self, x: torch.Tensor) -> torch.Tensor:
-        """DÃ¹ng mean/var Ä‘Ã£ â€œfreezeâ€ (khÃ´ng gá»i update() trong hÃ m nÃ y)."""
+        """DÃƒÂ¹ng mean/var Ã„â€˜ÃƒÂ£ Ã¢â‚¬Å“freezeÃ¢â‚¬Â (khÃƒÂ´ng gÃ¡Â»Âi update() trong hÃƒÂ m nÃƒÂ y)."""
         return ((x - self.mean) / (self.var ** 0.5 + 1e-8)).clamp(-10.0, 10.0)
 
 def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
-                 gap_bars=200, n_eval_eps=5):
+                 gap_bars=200):
     """
-    Cháº¡y nhanh model trÃªn pháº§n Out-Of-Sample (20% cuá»‘i) Ä‘á»ƒ theo dÃµi tiáº¿n Ä‘á»™.
-    Tráº£ vá» Sharpe Ratio trÃªn OOS episodes.
+    Chay 1 episode duy nhat xuyen suot toan bo OOS den khi truncated = True.
+
+    [FIX GROUNDHOG DAY] Khong lap n_eval_eps lan - du lieu time-series khong
+    ngau nhien, policy la deterministic => lap = nhan ban ket qua => Sharpe gia.
     """
     from src.training.backtest import compute_metrics
 
-    oos_start = split_idx + gap_bars  # [FIX] ÄÆ°á»£c bÃºt qua gap 200 bars
+    oos_start = split_idx + gap_bars
     with h5py.File(h5_path, "r") as f:
-        X_oos     = f["X"][oos_start:].astype(np.float32)
-        y_oos     = f["y"][oos_start:]
-        close_oos = f["close"][oos_start:].astype(np.float32)
+        X_oos         = f["X"][oos_start:].astype(np.float32)
+        y_oos         = f["y"][oos_start:]
+        close_oos     = f["close"][oos_start:].astype(np.float32)
+        open_next_oos = f["open_next"][oos_start:].astype(np.float32)  # [FIX LOOKAHEAD]
 
     env = XAUUSDEnv(
-        features=X_oos, close_prices=close_oos, oracle_labels=y_oos,
-        window_size=window_size, spread_pips=25, lot_size=0.01,
-        initial_balance=200.0, max_drawdown_usd=20.0,
+        features         = X_oos,
+        close_prices     = close_oos,
+        open_next_prices = open_next_oos,   # [FIX]
+        oracle_labels    = y_oos,
+        window_size      = window_size,
+        spread_pips      = 25,
+        lot_size         = 0.01,
+        initial_balance  = 200.0,
+        max_drawdown_usd = 20.0,
     )
     model.eval()
-    all_returns = []
-    for _ in range(n_eval_eps):
-        obs, _ = env.reset()
-        done = False
-        balance_hist = [200.0]
-        while not done:
-            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-            with torch.no_grad():
-                logits, _ = model(obs_t)
-                action = logits.argmax(-1).item()  # deterministic (greedy)
-            obs, _, term, trunc, _ = env.step(action)
-            balance_hist.append(env._balance)
-            done = term or trunc
-        returns = np.diff(balance_hist) / np.array(balance_hist[:-1])
-        all_returns.extend(returns.tolist())
+
+    # [FIX GROUNDHOG] Chi 1 episode - chay den het OOS (truncated = True)
+    obs, _ = env.reset()
+    done = False
+    balance_hist = [200.0]
+    while not done:
+        obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+        with torch.no_grad():
+            logits, _ = model(obs_t)
+            action = logits.argmax(-1).item()   # deterministic (greedy)
+        obs, _, term, trunc, _ = env.step(action)
+        balance_hist.append(env._balance)
+        done = term or trunc
+
     model.train()
-    metrics = compute_metrics(np.array(all_returns))
+    bar_returns = np.diff(balance_hist) / np.array(balance_hist[:-1])
+    metrics = compute_metrics(bar_returns)
     return metrics["sharpe"]
 
 
@@ -261,9 +270,9 @@ def ppo_update(
     batch_size = 256,
 ):
     """
-    PPO update vá»›i KL Anchor.
-    Returns Ä‘Ã£ Ä‘Æ°á»£c chuáº©n hÃ³a BÃŠN NGOAI (RunningMeanStd.update() gá»i trÆ°á»›c).
-    flat_ret lÃ  tensor Ä‘Ã£ normalize, mean/var freeze trong suá»‘t vÃ²ng láº·p.
+    PPO update vÃ¡Â»â€ºi KL Anchor.
+    Returns Ã„â€˜ÃƒÂ£ Ã„â€˜Ã†Â°Ã¡Â»Â£c chuÃ¡ÂºÂ©n hÃƒÂ³a BÃƒÅ N NGOAI (RunningMeanStd.update() gÃ¡Â»Âi trÃ†Â°Ã¡Â»â€ºc).
+    flat_ret lÃƒÂ  tensor Ã„â€˜ÃƒÂ£ normalize, mean/var freeze trong suÃ¡Â»â€˜t vÃƒÂ²ng lÃ¡ÂºÂ·p.
     """
     T, E = obs.shape[:2]
     flat_obs  = obs.view(T * E, *obs.shape[2:]).to(device)
@@ -271,7 +280,7 @@ def ppo_update(
     flat_logp = old_logps.view(-1).to(device)
     flat_adv  = advantages.view(-1).to(device)
     flat_adv  = (flat_adv - flat_adv.mean()) / (flat_adv.std() + 1e-8)
-    # flat_ret Ä‘Ã£ sáºµn sÃ ng (normalized, frozen)
+    # flat_ret Ã„â€˜ÃƒÂ£ sÃ¡ÂºÂµn sÃƒÂ ng (normalized, frozen)
     flat_ret  = flat_ret.to(device)
 
     losses = []
@@ -292,7 +301,7 @@ def ppo_update(
 
             vf_loss = F.mse_loss(value.squeeze(-1), flat_ret[b])
 
-            # KL Anchor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # KL Anchor Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
             with torch.no_grad():
                 bc_logits, _ = bc_model(flat_obs[b])
             kl_loss = F.kl_div(
@@ -315,15 +324,15 @@ def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info(f"Device: {device}")
 
-    # â”€â”€ Ä‘á»c metadata tá»« HDF5 â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Ã¢â€â‚¬Ã¢â€â‚¬ Ã„â€˜Ã¡Â»Âc metadata tÃ¡Â»Â« HDF5 Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     with h5py.File(args.h5, "r") as f:
         n_total, window_size, n_features = f["X"].shape
-    GAP_BARS  = 200  # [FIX] Purged gap giá»¯a train vÃ  OOS
-    split_idx = int(n_total * 0.8) - GAP_BARS  # Train dá»«ng trÆ°á»›c gap
-    oos_start = int(n_total * 0.8)              # OOS báº¯t Ä‘áº§u sau gap
+    GAP_BARS  = 200  # [FIX] Purged gap giÃ¡Â»Â¯a train vÃƒÂ  OOS
+    split_idx = int(n_total * 0.8) - GAP_BARS  # Train dÃ¡Â»Â«ng trÃ†Â°Ã¡Â»â€ºc gap
+    oos_start = int(n_total * 0.8)              # OOS bÃ¡ÂºÂ¯t Ã„â€˜Ã¡ÂºÂ§u sau gap
     log.info(f"Split: train[:{split_idx}] | gap={GAP_BARS} | OOS[{oos_start}:]")
 
-    # â”€â”€ BC Model â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Ã¢â€â‚¬Ã¢â€â‚¬ BC Model Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     ckpt = torch.load(args.bc_ckpt, map_location=device)
     bc_model = XAUTransformer(n_features=n_features, window_size=window_size,
                               d_model=256, n_heads=8, n_layers=6).to(device)
@@ -338,7 +347,7 @@ def train(args):
     ppo_model.load_state_dict(ckpt["model_state"])
     optimizer = optim.AdamW(ppo_model.parameters(), lr=args.lr, weight_decay=1e-4)
 
-    # â”€â”€ [FIX OOM] Envs Ä‘á»c HDF5 tá»« file, khÃ´ng copy array â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Ã¢â€â‚¬Ã¢â€â‚¬ [FIX OOM] Envs Ã„â€˜Ã¡Â»Âc HDF5 tÃ¡Â»Â« file, khÃƒÂ´ng copy array Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
     vec_env = make_async_envs(
         h5_path=args.h5, n_total=n_total,
         split_idx=split_idx, window_size=window_size,
@@ -350,7 +359,7 @@ def train(args):
     total_updates = args.total_steps // (rollout_steps * args.n_envs)
     CHECKPOINT_DIR.mkdir(exist_ok=True)
     ret_rms     = RunningMeanStd()
-    best_sharpe = -np.inf  # [FIX] Theo dÃµi best checkpoint báº±ng Sharpe OOS
+    best_sharpe = -np.inf  # [FIX] Theo dÃƒÂµi best checkpoint bÃ¡ÂºÂ±ng Sharpe OOS
 
     for update in range(1, total_updates + 1):
         kl_coef = max(0.05, 0.5 * math.exp(-update / (total_updates * 0.5)))
@@ -372,9 +381,9 @@ def train(args):
 
         if update % 10 == 0:
             log.info(f"Update {update:4d}/{total_updates} | "
-                     f"Loss={loss:.4f} | AvgRew={rewards.mean():.4f} | KLÎ»={kl_coef:.3f}")
+                     f"Loss={loss:.4f} | AvgRew={rewards.mean():.4f} | KLÃŽÂ»={kl_coef:.3f}")
 
-        # [FIX] Eval Ä‘á»‹nh ká»³ trÃªn OOS â€” lÆ°u best checkpoint báº±ng Sharpe
+        # [FIX] Eval Ã„â€˜Ã¡Â»â€¹nh kÃ¡Â»Â³ trÃƒÂªn OOS Ã¢â‚¬â€ lÃ†Â°u best checkpoint bÃ¡ÂºÂ±ng Sharpe
         if update % 50 == 0:
             sharpe = evaluate_oos(
                 ppo_model, args.h5, split_idx, n_total,
@@ -385,13 +394,13 @@ def train(args):
                 best_sharpe = sharpe
                 torch.save(ppo_model.state_dict(),
                            CHECKPOINT_DIR / "ppo_best.pt")
-                log.info(f"  âœ… New best checkpoint saved (Sharpe={best_sharpe:.4f})")
+                log.info(f"  Ã¢Å“â€¦ New best checkpoint saved (Sharpe={best_sharpe:.4f})")
 
         if update % 100 == 0:
             torch.save(ppo_model.state_dict(),
                        CHECKPOINT_DIR / f"ppo_step{update}.pt")
 
-    log.info("ðŸŽ‰ PPO training hoÃ n táº¥t!")
+    log.info("Ã°Å¸Å½â€° PPO training hoÃƒÂ n tÃ¡ÂºÂ¥t!")
     torch.save(ppo_model.state_dict(), CHECKPOINT_DIR / "ppo_final.pt")
     vec_env.close()
 
@@ -425,9 +434,9 @@ git commit -m "feat(sprint4): PPO CleanRL - AsyncVectorEnv, KL anchor, RMS freez
 - Create: `src/training/backtest.py`
 - Create: `src/training/tests/test_backtest.py`
 
-### Step 2.1: Viết failing tests cho Backtest
+### Step 2.1: Viáº¿t failing tests cho Backtest
 
-- [ ] **Tạo `src/training/tests/test_backtest.py`:**
+- [ ] **Táº¡o `src/training/tests/test_backtest.py`:**
 
 ```python
 # src/training/tests/test_backtest.py
@@ -441,31 +450,31 @@ from src.training.backtest import compute_metrics
 
 class TestBacktestMetrics:
     def test_positive_pnl_series_sharpe_positive(self):
-        """Chuỗi PnL dương đều đặn phải có Sharpe > 0."""
+        """Chuá»—i PnL dÆ°Æ¡ng Ä‘á»u Ä‘áº·n pháº£i cÃ³ Sharpe > 0."""
         daily_returns = np.array([0.001] * 252)
         metrics = compute_metrics(daily_returns)
-        assert metrics["sharpe"] > 0, f"Sharpe phải dương: {metrics['sharpe']}"
+        assert metrics["sharpe"] > 0, f"Sharpe pháº£i dÆ°Æ¡ng: {metrics['sharpe']}"
 
     def test_all_zero_returns_sharpe_zero(self):
-        """PnL = 0 mọi ngày → Sharpe = 0."""
+        """PnL = 0 má»i ngÃ y â†’ Sharpe = 0."""
         daily_returns = np.zeros(252)
         metrics = compute_metrics(daily_returns)
 
 
     def test_max_drawdown_is_non_positive(self):
-        """Max drawdown pháº£i <= 0 (biá»ƒu diá»…n máº¥t vá»‘n)."""
+        """Max drawdown phÃ¡ÂºÂ£i <= 0 (biÃ¡Â»Æ’u diÃ¡Â»â€¦n mÃ¡ÂºÂ¥t vÃ¡Â»â€˜n)."""
         daily_returns = np.array([0.01, -0.05, 0.02, -0.03, 0.01])
         metrics = compute_metrics(daily_returns)
         assert metrics["max_drawdown"] <= 0
 
     def test_win_rate_between_0_and_1(self):
-        """Win rate pháº£i náº±m trong [0, 1]."""
+        """Win rate phÃ¡ÂºÂ£i nÃ¡ÂºÂ±m trong [0, 1]."""
         returns = np.random.randn(100) * 0.01
         metrics = compute_metrics(returns)
         assert 0.0 <= metrics["win_rate"] <= 1.0
 
     def test_metrics_has_required_keys(self):
-        """Káº¿t quáº£ pháº£i cÃ³ Ä‘á»§ cÃ¡c key báº¯t buá»™c."""
+        """KÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ phÃ¡ÂºÂ£i cÃƒÂ³ Ã„â€˜Ã¡Â»Â§ cÃƒÂ¡c key bÃ¡ÂºÂ¯t buÃ¡Â»â„¢c."""
         returns = np.random.randn(252) * 0.001
         metrics = compute_metrics(returns)
         required = {"sharpe", "sortino", "max_drawdown", "win_rate",
@@ -473,27 +482,27 @@ class TestBacktestMetrics:
         assert required.issubset(set(metrics.keys()))
 ```
 
-- [ ] **Cháº¡y Ä‘á»ƒ verify FAIL:**
+- [ ] **ChÃ¡ÂºÂ¡y Ã„â€˜Ã¡Â»Æ’ verify FAIL:**
 ```bash
 python -m pytest src/training/tests/test_backtest.py -v
 ```
 
-- [ ] **Táº¡o `src/training/backtest.py`:**
+- [ ] **TÃ¡ÂºÂ¡o `src/training/backtest.py`:**
 
 ```python
 """
 backtest.py
 -----------
-Out-of-sample backtest: cháº¡y model trained qua dá»¯ liá»‡u chÆ°a tháº¥y,
-tÃ­nh cÃ¡c chá»‰ sá»‘ tÃ i chÃ­nh chuáº©n.
+Out-of-sample backtest: chÃ¡ÂºÂ¡y model trained qua dÃ¡Â»Â¯ liÃ¡Â»â€¡u chÃ†Â°a thÃ¡ÂºÂ¥y,
+tÃƒÂ­nh cÃƒÂ¡c chÃ¡Â»â€° sÃ¡Â»â€˜ tÃƒÂ i chÃƒÂ­nh chuÃ¡ÂºÂ©n.
 
-CÃ¡ch dÃ¹ng:
+CÃƒÂ¡ch dÃƒÂ¹ng:
   python src/training/backtest.py \\
       --h5      data/processed/XAUUSD_M15_w128.h5 \\
       --ckpt    checkpoints/ppo_xauusd.zip \\
-      --mode    ppo                         # hoáº·c bc
+      --mode    ppo                         # hoÃ¡ÂºÂ·c bc
 
-Chá»‰ sá»‘ output:
+ChÃ¡Â»â€° sÃ¡Â»â€˜ output:
   Sharpe Ratio, Sortino Ratio, Max Drawdown, Win Rate, Total Return
 """
 
@@ -515,15 +524,15 @@ log = logging.getLogger(__name__)
 
 def compute_metrics(daily_returns: np.ndarray) -> dict:
     """
-    TÃ­nh cÃ¡c chá»‰ sá»‘ tÃ i chÃ­nh tá»« máº£ng daily returns.
+    TÃƒÂ­nh cÃƒÂ¡c chÃ¡Â»â€° sÃ¡Â»â€˜ tÃƒÂ i chÃƒÂ­nh tÃ¡Â»Â« mÃ¡ÂºÂ£ng daily returns.
 
     Parameters
     ----------
-    daily_returns : np.ndarray â€” máº£ng % return má»—i bar/ngÃ y
+    daily_returns : np.ndarray Ã¢â‚¬â€ mÃ¡ÂºÂ£ng % return mÃ¡Â»â€”i bar/ngÃƒÂ y
 
     Returns
     -------
-    dict vá»›i keys: sharpe, sortino, max_drawdown, win_rate,
+    dict vÃ¡Â»â€ºi keys: sharpe, sortino, max_drawdown, win_rate,
                    total_return, n_trades
     """
     r = np.array(daily_returns, dtype=np.float64)
@@ -536,10 +545,10 @@ def compute_metrics(daily_returns: np.ndarray) -> dict:
     mean_r = r.mean()
     std_r  = r.std()
 
-    # Sharpe Ratio (annualized Ã—âˆš252 náº¿u daily, Ã—âˆš(252Ã—24Ã—4) náº¿u M15)
+    # Sharpe Ratio (annualized Ãƒâ€”Ã¢Ë†Å¡252 nÃ¡ÂºÂ¿u daily, Ãƒâ€”Ã¢Ë†Å¡(252Ãƒâ€”24Ãƒâ€”4) nÃ¡ÂºÂ¿u M15)
     sharpe = (mean_r / std_r * np.sqrt(252)) if std_r > 0 else 0.0
 
-    # Sortino Ratio (chá»‰ dÃ¹ng downside std)
+    # Sortino Ratio (chÃ¡Â»â€° dÃƒÂ¹ng downside std)
     negative_r  = r[r < 0]
     down_std    = negative_r.std() if len(negative_r) > 0 else 0.0
     sortino = (mean_r / down_std * np.sqrt(252)) if down_std > 0 else 0.0
@@ -556,7 +565,7 @@ def compute_metrics(daily_returns: np.ndarray) -> dict:
     # Total Return
     total_return = float(cumulative[-1] - 1.0) if n > 0 else 0.0
 
-    # N trades = sá»‘ bar cÃ³ return != 0
+    # N trades = sÃ¡Â»â€˜ bar cÃƒÂ³ return != 0
     n_trades = int((r != 0).sum())
 
     return dict(
@@ -571,7 +580,7 @@ def compute_metrics(daily_returns: np.ndarray) -> dict:
 
 def print_report(metrics: dict, label: str = "OUT-OF-SAMPLE"):
     log.info(f"\n{'='*55}")
-    log.info(f"  BACKTEST REPORT â€” {label}")
+    log.info(f"  BACKTEST REPORT Ã¢â‚¬â€ {label}")
     log.info(f"{'='*55}")
     log.info(f"  Sharpe Ratio   : {metrics['sharpe']:>8.4f}  (Target: >1.0)")
     log.info(f"  Sortino Ratio  : {metrics['sortino']:>8.4f}")
@@ -586,7 +595,7 @@ def print_report(metrics: dict, label: str = "OUT-OF-SAMPLE"):
         metrics["win_rate"]     >= 0.55 and
         metrics["max_drawdown"] >= -0.10
     )
-    status = "âœ… PASS â€” Äá»§ tiÃªu chuáº©n deploy" if passed else "âŒ FAIL â€” Cáº§n cáº£i thiá»‡n thÃªm"
+    status = "Ã¢Å“â€¦ PASS Ã¢â‚¬â€ Ã„ÂÃ¡Â»Â§ tiÃƒÂªu chuÃ¡ÂºÂ©n deploy" if passed else "Ã¢ÂÅ’ FAIL Ã¢â‚¬â€ CÃ¡ÂºÂ§n cÃ¡ÂºÂ£i thiÃ¡Â»â€¡n thÃƒÂªm"
     log.info(f"\n  {status}")
     log.info(f"{'='*55}\n")
     return passed
@@ -602,21 +611,21 @@ def main():
     log.info(f"Backtest mode: {args.mode.upper()}")
     log.info(f"Checkpoint: {args.ckpt}")
 
-    # Trong thá»±c táº¿: cháº¡y model qua out-of-sample env vÃ  thu tháº­p returns
-    # ÄÃ¢y lÃ  scaffold â€” sáº½ Ä‘Æ°á»£c hoÃ n thiá»‡n khi env + model Ä‘Ã£ sáºµn sÃ ng
-    log.info("âš ï¸  Running simplified backtest scaffold (returns cáº§n Ä‘Æ°á»£c thu tháº­p tá»« env.step)")
-    log.info("    Sá»­ dá»¥ng compute_metrics() vá»›i array returns sau khi roll-out Ä‘áº§y Ä‘á»§.")
+    # Trong thÃ¡Â»Â±c tÃ¡ÂºÂ¿: chÃ¡ÂºÂ¡y model qua out-of-sample env vÃƒÂ  thu thÃ¡ÂºÂ­p returns
+    # Ã„ÂÃƒÂ¢y lÃƒÂ  scaffold Ã¢â‚¬â€ sÃ¡ÂºÂ½ Ã„â€˜Ã†Â°Ã¡Â»Â£c hoÃƒÂ n thiÃ¡Â»â€¡n khi env + model Ã„â€˜ÃƒÂ£ sÃ¡ÂºÂµn sÃƒÂ ng
+    log.info("Ã¢Å¡Â Ã¯Â¸Â  Running simplified backtest scaffold (returns cÃ¡ÂºÂ§n Ã„â€˜Ã†Â°Ã¡Â»Â£c thu thÃ¡ÂºÂ­p tÃ¡Â»Â« env.step)")
+    log.info("    SÃ¡Â»Â­ dÃ¡Â»Â¥ng compute_metrics() vÃ¡Â»â€ºi array returns sau khi roll-out Ã„â€˜Ã¡ÂºÂ§y Ã„â€˜Ã¡Â»Â§.")
 
 
 if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Cháº¡y Ä‘á»ƒ verify PASS:**
+- [ ] **ChÃ¡ÂºÂ¡y Ã„â€˜Ã¡Â»Æ’ verify PASS:**
 ```bash
 python -m pytest src/training/tests/test_backtest.py -v
 ```
-Káº¿t quáº£ mong Ä‘á»£i: `5 passed`
+KÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ mong Ã„â€˜Ã¡Â»Â£i: `5 passed`
 
 - [ ] **Commit:**
 ```bash
@@ -632,15 +641,15 @@ git commit -m "feat(sprint4): backtest - compute_metrics Sharpe/Sortino/MaxDD/Wi
 - Create: `Dockerfile`
 - Create: `scripts/vast_launch.sh`
 
-### Step 3.1: Táº¡o Dockerfile
+### Step 3.1: TÃ¡ÂºÂ¡o Dockerfile
 
-- [ ] **Táº¡o `Dockerfile`:**
+- [ ] **TÃ¡ÂºÂ¡o `Dockerfile`:**
 
 ```dockerfile
-# XAUUSD AI Trading Bot â€” Training Container (Phase 2: PPO)
-# Tá»‘i Æ°u cho RTX 4090 / RTX 5090 trÃªn Vast.ai
-# [FIX] Phase 2 (PPO) dÃ¹ng AsyncVectorEnv â€” cáº§n CPU Ä‘a luá»“ng máº¡nh,
-# khÃ´ng cháº¡y BC (Phase 1) vÃ¬ BC Ä‘Ã£ xong rá»“i!
+# XAUUSD AI Trading Bot Ã¢â‚¬â€ Training Container (Phase 2: PPO)
+# TÃ¡Â»â€˜i Ã†Â°u cho RTX 4090 / RTX 5090 trÃƒÂªn Vast.ai
+# [FIX] Phase 2 (PPO) dÃƒÂ¹ng AsyncVectorEnv Ã¢â‚¬â€ cÃ¡ÂºÂ§n CPU Ã„â€˜a luÃ¡Â»â€œng mÃ¡ÂºÂ¡nh,
+# khÃƒÂ´ng chÃ¡ÂºÂ¡y BC (Phase 1) vÃƒÂ¬ BC Ã„â€˜ÃƒÂ£ xong rÃ¡Â»â€œi!
 
 FROM pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime
 
@@ -652,7 +661,7 @@ RUN apt-get update && apt-get install -y \\
     htop \\
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements vÃ  install
+# Copy requirements vÃƒÂ  install
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -660,11 +669,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY src/ ./src/
 COPY data/ ./data/
 
-# Táº¡o thÆ° má»¥c output
+# TÃ¡ÂºÂ¡o thÃ†Â° mÃ¡Â»Â¥c output
 RUN mkdir -p checkpoints logs
 
-# [FIX] CMD cháº¡y PPO (Phase 2), khÃ´ng pháº£i BC (Phase 1)
-# BC checkpoint truyá»n vÃ o qua --bc-ckpt khi docker run
+# [FIX] CMD chÃ¡ÂºÂ¡y PPO (Phase 2), khÃƒÂ´ng phÃ¡ÂºÂ£i BC (Phase 1)
+# BC checkpoint truyÃ¡Â»Ân vÃƒÂ o qua --bc-ckpt khi docker run
 CMD ["python", "src/training/train_rl.py", \\
      "--h5",          "data/processed/XAUUSD_M15_w128.h5", \\
      "--bc-ckpt",     "checkpoints/best_model_bc.pt", \\
@@ -672,18 +681,18 @@ CMD ["python", "src/training/train_rl.py", \\
      "--total-steps", "2000000"]
 ```
 
-- [ ] **Táº¡o `scripts/vast_launch.sh`:**
+- [ ] **TÃ¡ÂºÂ¡o `scripts/vast_launch.sh`:**
 
 ```bash
 #!/bin/bash
-# vast_launch.sh â€” Triá»ƒn khai PPO training (Phase 2) lÃªn Vast.ai instance
-# [FIX] Cháº¡y train_rl.py (PPO), khÃ´ng pháº£i train_bc.py (BC Ä‘Ã£ xong á»Ÿ local)
-# CÃ¡ch dÃ¹ng: ./scripts/vast_launch.sh <INSTANCE_ID> <SSH_KEY_PATH> <BC_CKPT_PATH>
+# vast_launch.sh Ã¢â‚¬â€ TriÃ¡Â»Æ’n khai PPO training (Phase 2) lÃƒÂªn Vast.ai instance
+# [FIX] ChÃ¡ÂºÂ¡y train_rl.py (PPO), khÃƒÂ´ng phÃ¡ÂºÂ£i train_bc.py (BC Ã„â€˜ÃƒÂ£ xong Ã¡Â»Å¸ local)
+# CÃƒÂ¡ch dÃƒÂ¹ng: ./scripts/vast_launch.sh <INSTANCE_ID> <SSH_KEY_PATH> <BC_CKPT_PATH>
 #
 # Workflow:
-#   1. Upload source + HDF5 data + BC checkpoint lÃªn server
-#   2. Launch PPO training dÃ¹ng AsyncVectorEnv (64 envs)
-#   3. Checkpoint ppo_best.pt tá»± Ä‘á»™ng lÆ°u khi Sharpe OOS tá»‘t hÆ¡n
+#   1. Upload source + HDF5 data + BC checkpoint lÃƒÂªn server
+#   2. Launch PPO training dÃƒÂ¹ng AsyncVectorEnv (64 envs)
+#   3. Checkpoint ppo_best.pt tÃ¡Â»Â± Ã„â€˜Ã¡Â»â„¢ng lÃ†Â°u khi Sharpe OOS tÃ¡Â»â€˜t hÃ†Â¡n
 
 set -e
 
@@ -691,21 +700,21 @@ INSTANCE_ID=${1:?"Usage: $0 <instance_id> <ssh_key> <bc_ckpt>"}
 SSH_KEY=${2:?"Usage: $0 <instance_id> <ssh_key> <bc_ckpt>"}
 BC_CKPT=${3:-"checkpoints/best_model_bc.pt"}
 
-echo "=== XAUUSD Bot â€” Vast.ai PPO Deployment ==="
+echo "=== XAUUSD Bot Ã¢â‚¬â€ Vast.ai PPO Deployment ==="
 echo "Instance: $INSTANCE_ID"
 echo "BC Checkpoint: $BC_CKPT"
 
-# 1. Láº¥y connection info
+# 1. LÃ¡ÂºÂ¥y connection info
 CONN=$(vastai ssh-url $INSTANCE_ID)
 SSH_HOST=$(echo $CONN | sed 's/ssh:\/\///')
 
-# 2. Rsync source code + data + BC checkpoint lÃªn instance
+# 2. Rsync source code + data + BC checkpoint lÃƒÂªn instance
 echo "Uploading source code..."
 rsync -avz --exclude '.git' --exclude '__pycache__' \\
     -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \\
     ./ root@${SSH_HOST}:/workspace/
 
-# Upload BC checkpoint riÃªng náº¿u náº±m ngoÃ i workspace
+# Upload BC checkpoint riÃƒÂªng nÃ¡ÂºÂ¿u nÃ¡ÂºÂ±m ngoÃƒÂ i workspace
 if [ -f "$BC_CKPT" ]; then
     scp -i $SSH_KEY $BC_CKPT root@${SSH_HOST}:/workspace/checkpoints/best_model_bc.pt
     echo "BC checkpoint uploaded."
@@ -716,7 +725,7 @@ echo "Installing dependencies..."
 ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
     "cd /workspace && pip install -q -r requirements.txt"
 
-# 4. [FIX] Launch PPO training (Phase 2) â€” khÃ´ng pháº£i BC!
+# 4. [FIX] Launch PPO training (Phase 2) Ã¢â‚¬â€ khÃƒÂ´ng phÃ¡ÂºÂ£i BC!
 echo "Starting PPO RL training (Phase 2)..."
 ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
     "cd /workspace && nohup python src/training/train_rl.py \\
@@ -726,16 +735,16 @@ ssh -i $SSH_KEY -o StrictHostKeyChecking=no root@${SSH_HOST} \\
         --total-steps 2000000 \\
         > logs/train_rl.log 2>&1 &"
 
-echo "âœ… PPO training started! Theo dÃµi log:"
+echo "Ã¢Å“â€¦ PPO training started! Theo dÃƒÂµi log:"
 echo "   ssh -i $SSH_KEY root@${SSH_HOST} 'tail -f /workspace/logs/train_rl.log'"
 ```
 
-- [ ] **Táº¡o `scripts/pull_results.sh`:**
+- [ ] **TÃ¡ÂºÂ¡o `scripts/pull_results.sh`:**
 
 ```bash
 #!/bin/bash
-# pull_results.sh â€” KÃ©o káº¿t quáº£ training vá» local
-# CÃ¡ch dÃ¹ng: ./scripts/pull_results.sh <INSTANCE_ID> <SSH_KEY_PATH>
+# pull_results.sh Ã¢â‚¬â€ KÃƒÂ©o kÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ training vÃ¡Â»Â local
+# CÃƒÂ¡ch dÃƒÂ¹ng: ./scripts/pull_results.sh <INSTANCE_ID> <SSH_KEY_PATH>
 
 set -e
 INSTANCE_ID=${1:?"Usage: $0 <instance_id> <ssh_key>"}
@@ -753,7 +762,7 @@ rsync -avz \
     -e "ssh -i $SSH_KEY -o StrictHostKeyChecking=no" \
     root@${SSH_HOST}:/workspace/logs/ ./logs/
 
-echo "âœ… Done! Checkpoints saved to ./checkpoints/"
+echo "Ã¢Å“â€¦ Done! Checkpoints saved to ./checkpoints/"
 ls -lh ./checkpoints/
 ```
 
@@ -765,13 +774,13 @@ git commit -m "feat(sprint4): Dockerfile + Vast.ai launch/pull scripts"
 
 ---
 
-## Task 4: ToÃ n bá»™ tests Sprint 4 & Final Push
+## Task 4: ToÃƒÂ n bÃ¡Â»â„¢ tests Sprint 4 & Final Push
 
-- [ ] **Cháº¡y toÃ n bá»™ test suite:**
+- [ ] **ChÃ¡ÂºÂ¡y toÃƒÂ n bÃ¡Â»â„¢ test suite:**
 ```bash
 python -m pytest src/ -v --tb=short
 ```
-Káº¿t quáº£ mong Ä‘á»£i: `â‰¥ 35 passed, 0 failed` (táº¥t cáº£ 4 sprints)
+KÃ¡ÂºÂ¿t quÃ¡ÂºÂ£ mong Ã„â€˜Ã¡Â»Â£i: `Ã¢â€°Â¥ 35 passed, 0 failed` (tÃ¡ÂºÂ¥t cÃ¡ÂºÂ£ 4 sprints)
 
 - [ ] **Final push:**
 ```bash
@@ -780,15 +789,15 @@ git push origin main
 
 ---
 
-## Äiá»u kiá»‡n DONE cho Sprint 4 (& toÃ n dá»± Ã¡n v1)
+## Ã„ÂiÃ¡Â»Âu kiÃ¡Â»â€¡n DONE cho Sprint 4 (& toÃƒÂ n dÃ¡Â»Â± ÃƒÂ¡n v1)
 
-| Chá»‰ sá»‘ | Target |
+| ChÃ¡Â»â€° sÃ¡Â»â€˜ | Target |
 |---|---|
-| `pytest src/ -v` | âœ… 0 failures |
+| `pytest src/ -v` | Ã¢Å“â€¦ 0 failures |
 | F1(Buy) validation | > 0.40 |
 | F1(Sell) validation | > 0.40 |
 | Sharpe Ratio (out-of-sample) | > 1.0 |
 | Max Drawdown | < 10% ($20) |
 | Win Rate | > 55% |
-| Docker build | âœ… khÃ´ng crash |
-| Vast.ai training log | âœ… converging loss |
+| Docker build | Ã¢Å“â€¦ khÃƒÂ´ng crash |
+| Vast.ai training log | Ã¢Å“â€¦ converging loss |
