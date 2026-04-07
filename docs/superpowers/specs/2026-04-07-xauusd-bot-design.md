@@ -37,7 +37,7 @@ Xây dựng một Bot giao dịch AI cho cặp XAUUSD lấy cảm hứng từ Al
 
 **Nhiệm vụ:** Chuyển đổi dữ liệu OHLCV thô thành Feature Tensor chuẩn hóa, khử phi dừng.
 
-**Timeframe đầu vào:** M15 và H1 (multi-timeframe, nạp song song).
+**Timeframe data đầu vào:** M5, M15, H1 (multi-timeframe — 3 khung cùng được nạp vào pipeline).
 
 #### 1.1 — Khử Tính Phi Dừng (Non-Stationarity)
 
@@ -278,6 +278,6 @@ Mọi module **phải có passing tests trước khi viết code tiếp theo** (
 ## Data Source (Đã chốt)
 
 - **Nguồn:** MetaTrader5 Python API kết nối trực tiếp với Exness MT5 Terminal.
-- **Timeframe:** M15 và H1, kéo về 10 năm lịch sử.
+- **Timeframe:** M5, M15 và H1, kéo về 10 năm lịch sử.
 - **Yêu cầu:** MT5 Exness terminal phải đang chạy và đã đăng nhập trên máy Windows.
 - **Script:** `src/data/download_mt5.py`
