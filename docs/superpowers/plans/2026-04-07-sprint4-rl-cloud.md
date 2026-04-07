@@ -92,30 +92,25 @@ CHECKPOINT_DIR = Path("checkpoints")
 
 
 def make_async_envs(
-    h5_path:      str,   # [FIX OOM] Chỉ truyền đường dẫn, không truyền array
+    h5_path:      str,
     n_total:      int,
-    split_idx:    int,
+    split_idx:    int,    # Đã bao gồm purged gap bên trong
     window_size:  int,
     n_envs:       int,
 ):
     """
-    [FIX OOM] Truyền h5_path + offset vào closure thay vì raw numpy array.
-
-    Vấn đề: multiprocessing pickle toàn bộ X (vài GB) thành 64 bản sao.
-    Giải pháp: Mỗi worker tự đọc slice dữ liệu từ file HDF5 của chính nó.
-    HDF5 hỗ trợ concurrent read, không cần lock.
+    [FIX OOM] Truyền h5_path + offset, không truyền raw array.
+    Mỗi worker tự đọc HDF5 (cả X, y, và CLOSE) trong process riêng.
     """
     def _make_env_fn(offset: int):
         def _init():
-            # Mỗi worker mở file HDF5 trong process riêng của nó
             with h5py.File(h5_path, "r") as f:
                 X_slice      = f["X"][offset:split_idx].astype(np.float32)
                 label_slice  = f["y"][offset:split_idx]
-            # close_prices: placeholder — thay bằng real close khi có pipeline
-            close_slice = np.ones(len(X_slice), dtype=np.float32) * 1900.0
+                close_slice  = f["close"][offset:split_idx].astype(np.float32)  # [FIX]
             return XAUUSDEnv(
                 features         = X_slice,
-                close_prices     = close_slice,
+                close_prices     = close_slice,   # real prices!
                 oracle_labels    = label_slice,
                 window_size      = window_size,
                 spread_pips      = 25,
@@ -125,7 +120,6 @@ def make_async_envs(
             )
         return _init
 
-    # [FIX DC] Không có dead code sau return
     return AsyncVectorEnv([
         _make_env_fn((i * 500) % max(1, split_idx - window_size - 2000))
         for i in range(n_envs)
@@ -199,8 +193,46 @@ class RunningMeanStd:
         """Dùng mean/var đã “freeze” (không gọi update() trong hàm này)."""
         return ((x - self.mean) / (self.var ** 0.5 + 1e-8)).clamp(-10.0, 10.0)
 
+def evaluate_oos(model, h5_path, split_idx, n_total, window_size, device,
+                 gap_bars=200, n_eval_eps=5):
+    """
+    Chạy nhanh model trên phần Out-Of-Sample (20% cuối) để theo dõi tiến độ.
+    Trả về Sharpe Ratio trên OOS episodes.
+    """
+    from src.training.backtest import compute_metrics
 
-# [FIX SYN] Thêm 'def' bị thiếu do copy/paste lỗi
+    oos_start = split_idx + gap_bars  # [FIX] Được bút qua gap 200 bars
+    with h5py.File(h5_path, "r") as f:
+        X_oos     = f["X"][oos_start:].astype(np.float32)
+        y_oos     = f["y"][oos_start:]
+        close_oos = f["close"][oos_start:].astype(np.float32)
+
+    env = XAUUSDEnv(
+        features=X_oos, close_prices=close_oos, oracle_labels=y_oos,
+        window_size=window_size, spread_pips=25, lot_size=0.01,
+        initial_balance=200.0, max_drawdown_usd=20.0,
+    )
+    model.eval()
+    all_returns = []
+    for _ in range(n_eval_eps):
+        obs, _ = env.reset()
+        done = False
+        balance_hist = [200.0]
+        while not done:
+            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+            with torch.no_grad():
+                logits, _ = model(obs_t)
+                action = logits.argmax(-1).item()  # deterministic (greedy)
+            obs, _, term, trunc, _ = env.step(action)
+            balance_hist.append(env._balance)
+            done = term or trunc
+        returns = np.diff(balance_hist) / np.array(balance_hist[:-1])
+        all_returns.extend(returns.tolist())
+    model.train()
+    metrics = compute_metrics(np.array(all_returns))
+    return metrics["sharpe"]
+
+
 def compute_gae(rewards, values, dones, gamma=0.99, lam=0.95):
     """Generalized Advantage Estimation."""
     T, E = rewards.shape
@@ -283,11 +315,13 @@ def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     log.info(f"Device: {device}")
 
-    # ── đọc metadata từ HDF5 (không load toàn bộ vào RAM main process) ──
+    # ── đọc metadata từ HDF5 ─────────────────────────────────────────────
     with h5py.File(args.h5, "r") as f:
         n_total, window_size, n_features = f["X"].shape
-    split_idx = int(n_total * 0.8)
-    log.info(f"Dataset: N={n_total}, W={window_size}, F={n_features} | split={split_idx}")
+    GAP_BARS  = 200  # [FIX] Purged gap giữa train và OOS
+    split_idx = int(n_total * 0.8) - GAP_BARS  # Train dừng trước gap
+    oos_start = int(n_total * 0.8)              # OOS bắt đầu sau gap
+    log.info(f"Split: train[:{split_idx}] | gap={GAP_BARS} | OOS[{oos_start}:]")
 
     # ── BC Model ───────────────────────────────────────────────────
     ckpt = torch.load(args.bc_ckpt, map_location=device)
@@ -315,7 +349,8 @@ def train(args):
     rollout_steps = 2048
     total_updates = args.total_steps // (rollout_steps * args.n_envs)
     CHECKPOINT_DIR.mkdir(exist_ok=True)
-    ret_rms = RunningMeanStd()  # [FIX RMS] khởi tạo ngoài vòng lặp
+    ret_rms     = RunningMeanStd()
+    best_sharpe = -np.inf  # [FIX] Theo dõi best checkpoint bằng Sharpe OOS
 
     for update in range(1, total_updates + 1):
         kl_coef = max(0.05, 0.5 * math.exp(-update / (total_updates * 0.5)))
@@ -325,10 +360,9 @@ def train(args):
 
         adv, returns = compute_gae(rewards, values, dones)
 
-        # [FIX RMS] Update RMS 1 lần sau rollout, FREEZE khi ppo_update()
         raw_ret = returns.view(-1)
         ret_rms.update(raw_ret)
-        flat_ret_norm = ret_rms.normalize(raw_ret)  # tensor, freeze từ đây
+        flat_ret_norm = ret_rms.normalize(raw_ret)
 
         loss = ppo_update(
             ppo_model, bc_model, optimizer,
@@ -339,6 +373,19 @@ def train(args):
         if update % 10 == 0:
             log.info(f"Update {update:4d}/{total_updates} | "
                      f"Loss={loss:.4f} | AvgRew={rewards.mean():.4f} | KLλ={kl_coef:.3f}")
+
+        # [FIX] Eval định kỳ trên OOS — lưu best checkpoint bằng Sharpe
+        if update % 50 == 0:
+            sharpe = evaluate_oos(
+                ppo_model, args.h5, split_idx, n_total,
+                window_size, device, gap_bars=GAP_BARS
+            )
+            log.info(f"  [OOS EVAL] Sharpe={sharpe:.4f} | Best={best_sharpe:.4f}")
+            if sharpe > best_sharpe:
+                best_sharpe = sharpe
+                torch.save(ppo_model.state_dict(),
+                           CHECKPOINT_DIR / "ppo_best.pt")
+                log.info(f"  ✅ New best checkpoint saved (Sharpe={best_sharpe:.4f})")
 
         if update % 100 == 0:
             torch.save(ppo_model.state_dict(),

@@ -622,19 +622,23 @@ def _make_feature_df(n: int = 300) -> pd.DataFrame:
     """Tạo DataFrame features giả (output của DataProcessor)."""
     idx = pd.date_range("2020-01-01", periods=n, freq="15min", tz="UTC")
     np.random.seed(0)
+    close_raw = 1800.0 + np.cumsum(np.random.randn(n) * 0.5)  # giá đóng thực
     data = {
-        "log_open":   np.random.randn(n) * 0.001,
-        "log_high":   np.random.randn(n) * 0.001,
-        "log_low":    np.random.randn(n) * 0.001,
-        "log_close":  np.random.randn(n) * 0.001,
-        "log_volume": np.random.randn(n) * 0.1,
-        "atr_norm":   np.abs(np.random.randn(n)) * 0.001 + 0.001,
-        "hour_sin":   np.sin(np.arange(n) * 2 * np.pi / 24),
-        "hour_cos":   np.cos(np.arange(n) * 2 * np.pi / 24),
-        "dow_sin":    np.sin(np.arange(n) * 2 * np.pi / 7),
-        "dow_cos":    np.cos(np.arange(n) * 2 * np.pi / 7),
+        "log_open":     np.random.randn(n) * 0.001,
+        "log_high":     np.random.randn(n) * 0.001,
+        "log_low":      np.random.randn(n) * 0.001,
+        "log_close":    np.random.randn(n) * 0.001,
+        "log_volume":   np.random.randn(n) * 0.1,
+        "atr_norm":     np.abs(np.random.randn(n)) * 0.001 + 0.001,
+        "hour_sin":     np.sin(np.arange(n) * 2 * np.pi / 24),
+        "hour_cos":     np.cos(np.arange(n) * 2 * np.pi / 24),
+        "dow_sin":      np.sin(np.arange(n) * 2 * np.pi / 7),
+        "dow_cos":      np.cos(np.arange(n) * 2 * np.pi / 7),
+        "is_us_session":np.zeros(n),
+        "is_weekend":   np.zeros(n),
+        "is_gap":       np.zeros(n),
     }
-    return pd.DataFrame(data, index=idx)
+    return pd.DataFrame(data, index=idx), pd.Series(close_raw, index=idx, name="close")
 
 
 def _make_labels(n: int = 300) -> pd.Series:
@@ -658,27 +662,30 @@ class TestDatasetBuilder:
         assert out_path.exists(), "File HDF5 không được tạo ra"
 
     def test_h5_has_correct_datasets(self, tmp_path):
-        """HDF5 phải có 2 dataset: 'X' (features) và 'y' (labels)."""
-        features = _make_feature_df(300)
+        """HDF5 phải có 3 dataset: 'X', 'y', và 'close' (giá gốc cho Simulator)."""
+        features, close_s = _make_feature_df(300)
         labels   = _make_labels(300)
         builder  = DatasetBuilder(window_size=64)
         out_path = tmp_path / "test_dataset.h5"
-        builder.build(features, labels, out_path)
+        builder.build(features, labels, out_path, close_prices=close_s)
 
         with h5py.File(out_path, "r") as f:
-            assert "X" in f, "Thiếu dataset 'X' trong HDF5"
-            assert "y" in f, "Thiếu dataset 'y' trong HDF5"
+            assert "X"     in f, "Thiếu dataset 'X' trong HDF5"
+            assert "y"     in f, "Thiếu dataset 'y' trong HDF5"
+            assert "close" in f, (
+                "[CRITICAL] Thiếu dataset 'close' — Simulator sẽ không thể tính PnL!"
+            )
 
     def test_x_shape_correct(self, tmp_path):
         """Shape của X phải là (N_windows, window_size, n_features)."""
         n, win = 300, 64
-        features = _make_feature_df(n)
+        features, close_s = _make_feature_df(n)
         labels   = _make_labels(n)
         builder  = DatasetBuilder(window_size=win)
         out_path = tmp_path / "test_dataset.h5"
-        builder.build(features, labels, out_path)
+        builder.build(features, labels, out_path, close_prices=close_s)
 
-        expected_windows = n - win  # Số cửa sổ có thể tạo ra
+        expected_windows = n - win
         with h5py.File(out_path, "r") as f:
             X = f["X"]
             assert X.shape == (expected_windows, win, NUM_FEATURES), (
@@ -686,14 +693,42 @@ class TestDatasetBuilder:
                 f"nhận được {X.shape}"
             )
 
-    def test_y_shape_matches_x(self, tmp_path):
-        """Số nhãn y phải bằng số cửa sổ X."""
+    def test_close_shape_matches_windows(self, tmp_path):
+        """'close' phải có shape (N_windows,) — một giá đóng cho mỗi cửa sổ."""
         n, win = 300, 64
-        features = _make_feature_df(n)
+        features, close_s = _make_feature_df(n)
         labels   = _make_labels(n)
         builder  = DatasetBuilder(window_size=win)
         out_path = tmp_path / "test_dataset.h5"
-        builder.build(features, labels, out_path)
+        builder.build(features, labels, out_path, close_prices=close_s)
+
+        with h5py.File(out_path, "r") as f:
+            assert f["close"].shape[0] == f["X"].shape[0], (
+                f"'close' shape không khớp với số cửa sổ X: "
+                f"{f['close'].shape[0]} vs {f['X'].shape[0]}"
+            )
+
+    def test_close_prices_positive(self, tmp_path):
+        """Giá đóng phải luôn dương (giá XAUUSD thực tế)."""
+        n, win = 300, 64
+        features, close_s = _make_feature_df(n)
+        labels   = _make_labels(n)
+        builder  = DatasetBuilder(window_size=win)
+        out_path = tmp_path / "test_dataset.h5"
+        builder.build(features, labels, out_path, close_prices=close_s)
+
+        with h5py.File(out_path, "r") as f:
+            close = f["close"][:]
+            assert (close > 0).all(), f"Giá đóng phải dương, min={close.min():.2f}"
+
+    def test_y_shape_matches_x(self, tmp_path):
+        """Số nhãn y phải bằng số cửa sổ X."""
+        n, win = 300, 64
+        features, close_s = _make_feature_df(n)
+        labels   = _make_labels(n)
+        builder  = DatasetBuilder(window_size=win)
+        out_path = tmp_path / "test_dataset.h5"
+        builder.build(features, labels, out_path, close_prices=close_s)
 
         with h5py.File(out_path, "r") as f:
             assert f["X"].shape[0] == f["y"].shape[0], (
@@ -702,11 +737,11 @@ class TestDatasetBuilder:
 
     def test_no_nan_in_x(self, tmp_path):
         """Không được có NaN trong tensor X."""
-        features = _make_feature_df(300)
+        features, close_s = _make_feature_df(300)
         labels   = _make_labels(300)
         builder  = DatasetBuilder(window_size=64)
         out_path = tmp_path / "test_dataset.h5"
-        builder.build(features, labels, out_path)
+        builder.build(features, labels, out_path, close_prices=close_s)
 
         with h5py.File(out_path, "r") as f:
             X = f["X"][:]
@@ -714,11 +749,11 @@ class TestDatasetBuilder:
 
     def test_y_only_valid_labels(self, tmp_path):
         """Tất cả nhãn y phải là 0, 1, hoặc 2."""
-        features = _make_feature_df(300)
+        features, close_s = _make_feature_df(300)
         labels   = _make_labels(300)
         builder  = DatasetBuilder(window_size=64)
         out_path = tmp_path / "test_dataset.h5"
-        builder.build(features, labels, out_path)
+        builder.build(features, labels, out_path, close_prices=close_s)
 
         with h5py.File(out_path, "r") as f:
             y = f["y"][:]
@@ -744,9 +779,11 @@ dataset_builder.py
 Đóng gói Feature Tensor (output DataProcessor) và Labels (output Oracle)
 thành file HDF5 dạng Sliding Window sẵn sàng cho PyTorch DataLoader.
 
-Format HDF5:
-  X: float32 array, shape (N, window_size, n_features)
-  y: int8 array,    shape (N,)
+Format HDF5 (3 datasets):
+  X     : float32 array, shape (N, window_size, n_features)  — features đưa vào model
+  y     : int8    array, shape (N,)                           — nhãn Oracle (0/1/2)
+  close : float32 array, shape (N,)                           — giá đóng gốc (USD)
+                                                                 cho Simulator tính PnL
 """
 
 import logging
@@ -771,24 +808,30 @@ class DatasetBuilder:
 
     def build(
         self,
-        features: pd.DataFrame,
-        labels:   pd.Series,
-        out_path: Path,
+        features:     pd.DataFrame,
+        labels:       pd.Series,
+        out_path:     Path,
+        close_prices: pd.Series,   # [CRITICAL FIX] Giá đóng gốc cho Simulator
     ) -> None:
         """
-        Tạo file HDF5 từ features và labels.
+        Tạo file HDF5 từ features, labels, và close_prices.
 
         Parameters
         ----------
-        features : DataFrame output của DataProcessor (index phải khớp labels)
-        labels   : Series output của Oracle (index phải khớp features)
-        out_path : Path lưu file .h5
+        features     : DataFrame output của DataProcessor
+        labels       : Series output của Oracle
+        out_path     : Path lưu file .h5
+        close_prices : Series giá đóng gốc (chưa normalize) —
+                       cùng index với features.
+                       Buộc phải có: Simulator dùng để tính PnL thực tế.
         """
-        # Align theo index (phòng trường hợp lệch index)
+        # Align tất cả theo index
         features, labels = features.align(labels, join="inner", axis=0)
+        close_prices     = close_prices.reindex(features.index)
 
         feat_array  = features.to_numpy(dtype=np.float32)
         label_array = labels.to_numpy(dtype=np.int8)
+        close_array = close_prices.to_numpy(dtype=np.float32)
         n_rows, n_features = feat_array.shape
         win = self.window_size
 
@@ -805,17 +848,20 @@ class DatasetBuilder:
         X = np.lib.stride_tricks.sliding_window_view(
             feat_array, window_shape=(win, n_features)
         )
-        # sliding_window_view cho shape (n_windows, 1, win, n_features) — squeeze dim 1
-        X = X[:, 0, :, :]                      # shape: (n_windows, win, n_features)
-        y = label_array[win:]                  # nhãn tương ứng nến cuối cửa sổ
+        X = X[:, 0, :, :]                 # shape: (n_windows, win, n_features)
+        y = label_array[win:]             # nhãn của nến cuối mỗi cửa sổ
+
+        # [FIX] Lấy giá đóng của nến cuối trong mỗi cửa sổ (dùng cho Simulator)
+        close_out = close_array[win:]     # shape: (n_windows,)
 
         # ── Ghi HDF5 ─────────────────────────────────────────────────
         out_path = Path(out_path)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
         with h5py.File(out_path, "w") as f:
-            f.create_dataset("X", data=X, compression="gzip", compression_opts=4)
-            f.create_dataset("y", data=y, compression="gzip", compression_opts=4)
+            f.create_dataset("X",     data=X,         compression="gzip", compression_opts=4)
+            f.create_dataset("y",     data=y,         compression="gzip", compression_opts=4)
+            f.create_dataset("close", data=close_out, compression="gzip", compression_opts=4)
 
         size_mb = out_path.stat().st_size / (1024 * 1024)
         log.info(f"✅ Saved: {out_path}  (X={X.shape}, y={y.shape}, {size_mb:.1f} MB)")
