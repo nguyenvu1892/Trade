@@ -275,6 +275,9 @@ Mọi module **phải có passing tests trước khi viết code tiếp theo** (
 
 ---
 
-## Open Questions (Còn lại)
+## Data Source (Đã chốt)
 
-1. **Nguồn dữ liệu:** Bạn có sẵn file CSV lịch sử XAUUSD M15/H1 10 năm chưa, hay cần viết script tải về (từ MT4 export hoặc API)?
+- **Nguồn:** MetaTrader5 Python API kết nối trực tiếp với Exness MT5 Terminal.
+- **Timeframe:** M15 và H1, kéo về 10 năm lịch sử.
+- **Yêu cầu:** MT5 Exness terminal phải đang chạy và đã đăng nhập trên máy Windows.
+- **Script:** `src/data/download_mt5.py`
