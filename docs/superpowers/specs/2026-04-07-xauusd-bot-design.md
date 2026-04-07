@@ -23,7 +23,7 @@ Xây dựng một Bot giao dịch AI cho cặp XAUUSD lấy cảm hứng từ Al
 |---|---|
 | Lõi tính toán | PyTorch |
 | Môi trường Gym | Gymnasium |
-| PPO Agent | Stable-Baselines3 hoặc Ray RLlib |
+| PPO Agent | CleanRL PPO hoặc Ray RLlib |
 | I/O Dữ liệu lớn | H5py (HDF5) |
 | Containerization | Docker |
 
@@ -147,7 +147,7 @@ Positional Encoding (Sine/Cosine absolute positions)
 Causal Transformer Encoder × L layers
 (Multi-Head Self-Attention + FFN + LayerNorm + Dropout)
      ↓
-Global Average Pooling (lấy đại diện toàn chuỗi)
+Last Token Extraction (lấy đại diện toàn chuỗi)
      ↓
     ┌─────────────────────┐
     ↓                     ↓

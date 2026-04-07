@@ -502,7 +502,7 @@ class XAUUSDEnv(gym.Env):
             self._oracle         = oracle_labels
             n_features           = features.shape[1]
         self._window         = window_size
-        self._spread_usd     = spread_pips * lot_size / 100.0
+        self._spread_price_shift     = spread_pips * lot_size / 100.0
         self._lot            = lot_size
         self._init_balance   = initial_balance
         self._max_dd         = max_drawdown_usd
@@ -563,14 +563,14 @@ class XAUUSDEnv(gym.Env):
                 commission             = self._reward_calc.on_open_commission()
                 self._balance         += commission
                 self._position_dir     = 1
-                self._entry_price      = entry_price + self._spread_usd
+                self._entry_price      = entry_price + self._spread_price_shift
                 self._consecutive_hold = 0
                 reward                 = commission
             elif action == 2:  # Sell
                 commission             = self._reward_calc.on_open_commission()
                 self._balance         += commission
                 self._position_dir     = -1
-                self._entry_price      = entry_price - self._spread_usd
+                self._entry_price      = entry_price - self._spread_price_shift
                 self._consecutive_hold = 0
                 reward                 = commission
             else:  # Hold khi Flat — phạt đứng im
@@ -609,7 +609,7 @@ class XAUUSDEnv(gym.Env):
                     self._balance     += commission
                     reward            += commission
                     new_dir            = 1 if action == 1 else -1
-                    spread_adj         = self._spread_usd if new_dir == 1 else -self._spread_usd
+                    spread_adj         = self._spread_price_shift if new_dir == 1 else -self._spread_price_shift
                     self._position_dir = new_dir
                     self._entry_price  = entry_price + spread_adj
             else:
