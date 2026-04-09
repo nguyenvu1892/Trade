@@ -60,8 +60,8 @@ CONFIG = {
     "confidence_min":   0.45,
 
     # ── Trailing Stop ──
-    "trailing_activate_atr": 1.0,    # Kích hoạt trailing khi lãi > 1.0 ATR
-    "trailing_distance_atr": 1.5,    # Trailing cách giá 1.5 ATR
+    "trailing_activate_atr": 1.5,    # Kích hoạt trailing khi lãi > 1.5 ATR
+    "trailing_distance_atr": 0.5,    # Trailing cách giá 0.5 ATR
     "trailing_check_interval": 30,   # Check giá mỗi 30 giây
 
     # ── Dynamic Lot Sizing (Kelly) ──
