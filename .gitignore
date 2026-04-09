@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Data (quá lớn cho Git)
+data/raw/
+data/processed/*.h5
+*.h5
+
+# Model checkpoints (quá lớn cho Git)
+checkpoints/*.pt
+
+# Logs
+logs/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp/Test scripts
+test_live_pipeline.py
+run_fix.py
+force_cuda.py
+eval_bc.py
+deploy_waiter.py
+auto_pull_and_kill.py

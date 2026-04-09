@@ -56,7 +56,7 @@ def run_pipeline(
 ) -> None:
     log.info(f"\n{'='*60}")
     log.info(f"  PIPELINE: {tf_name}")
-    log.info(f"{='*60}")
+    log.info(f"{'='*60}")
 
     # 1. Load
     log.info("Step 1: Load CSV...")
@@ -108,14 +108,18 @@ def run_pipeline(
 
 def main():
     parser = argparse.ArgumentParser(description="Build XAUUSD training dataset")
+    parser.add_argument("--m5",  help="Glob path tới file CSV M5")
     parser.add_argument("--m15", help="Glob path tới file CSV M15")
     parser.add_argument("--h1",  help="Glob path tới file CSV H1")
     parser.add_argument("--window-size", type=int, default=128)
     args = parser.parse_args()
 
-    if not args.m15 and not args.h1:
-        parser.error("Cần ít nhất --m15 hoặc --h1")
+    if not args.m5 and not args.m15 and not args.h1:
+        parser.error("Cần ít nhất --m5, --m15 hoặc --h1")
 
+    if args.m5:
+        run_pipeline(args.m5, "M5", window_size=args.window_size,
+                     max_hold=144)  # 144 nến M5 = 12 giờ
     if args.m15:
         run_pipeline(args.m15, "M15", window_size=args.window_size,
                      max_hold=48)   # 48 nến M15 = 12 giờ

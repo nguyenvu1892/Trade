@@ -1,13 +1,10 @@
 # ─── Core ML ───────────────────────────────────────────────
-torch>=2.2.0
-torchvision>=0.17.0
-
+# Dùng PyTorch được build sẵn trong Docker (pytorch/pytorch:2.2.0-cuda12.1-cudnn8-runtime)
 # ─── RL Framework ──────────────────────────────────────────
 stable-baselines3>=2.3.0
 gymnasium>=0.29.0
 
 # ─── Data I/O ──────────────────────────────────────────────
-MetaTrader5>=5.0.45
 pandas>=2.2.0
 numpy>=1.26.0
 h5py>=3.10.0
