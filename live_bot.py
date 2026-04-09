@@ -261,7 +261,7 @@ def send_market_order(symbol: str, direction: str, lot: float, magic: int) -> bo
         "magic": magic,
         "comment": "ScalpEx200",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": mt5.ORDER_FILLING_FOK,
     }
 
     result = mt5.order_send(request)
@@ -299,7 +299,7 @@ def close_position(position, symbol: str) -> float:
         "magic": position.magic,
         "comment": "ScalpEx200_Close",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_IOC,
+        "type_filling": mt5.ORDER_FILLING_FOK,
     }
 
     result = mt5.order_send(request)
