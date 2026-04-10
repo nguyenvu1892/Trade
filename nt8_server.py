@@ -1,4 +1,6 @@
 import pandas as pd
+import csv
+import json
 import numpy as np
 import torch
 from collections import deque
@@ -44,6 +46,22 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
         self.processor = DataProcessor(atr_period=14)
         n_params = sum(p.numel() for p in self.model.parameters())
         log.info(f"🧠 Model loaded: best_model_bc.pt ({n_params:,} params)")
+        
+        # --- DATA COLLECTOR: Lưu nến CME sạch để retrain ---
+        self.data_file = Path("data/mgc_m5_cme.csv")
+        self.data_file.parent.mkdir(exist_ok=True)
+        self._existing_times = set()
+        if self.data_file.exists():
+            try:
+                df_existing = pd.read_csv(self.data_file)
+                self._existing_times = set(df_existing['datetime'].tolist())
+                log.info(f"📦 Data Collector: Đã có {len(self._existing_times)} nến trong {self.data_file}")
+            except: pass
+        else:
+            with open(self.data_file, 'w', newline='') as f:
+                csv.writer(f).writerow(['datetime','open','high','low','close','tick_volume'])
+            log.info(f"📦 Data Collector: Tạo file mới {self.data_file}")
+        self._candles_saved = 0
     
     def EvaluateCandle(self, request, context):
         new_candle = {
@@ -55,6 +73,16 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
             'tick_volume': request.volume
         }
         self.candles_buffer.append(new_candle)
+        
+        # Lưu nến vào CSV (chống trùng lặp bằng datetime)
+        dt_str = str(new_candle['datetime'])
+        if dt_str not in self._existing_times:
+            self._existing_times.add(dt_str)
+            with open(self.data_file, 'a', newline='') as f:
+                csv.writer(f).writerow([dt_str, new_candle['open'], new_candle['high'], new_candle['low'], new_candle['close'], new_candle['tick_volume']])
+            self._candles_saved += 1
+            if self._candles_saved % 500 == 0:
+                log.info(f"💾 Data Collector: Đã lưu {self._candles_saved} nến mới vào {self.data_file}")
         
         if len(self.candles_buffer) < self.required_bars:
             if len(self.candles_buffer) % 50 == 0:
@@ -143,7 +171,6 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
         signal_file = Path("logs/nt8_signal.json")
         try:
             with open(signal_file, "w", encoding="utf-8") as f:
-                import json
                 json.dump(signal_data, f, indent=2)
         except Exception as e:
             log.error(f"❌ Khong the ghi nt8_signal.json: {e}")
