@@ -52,7 +52,7 @@ CONFIG = {
     "magic_number":     200500,
 
     # ── Model ──
-    "checkpoint":       "checkpoints/ppo_best.pt",
+    "checkpoint":       "checkpoints/best_model_bc.pt",
     "window_size":      256,
     "d_model":          256,
     "n_heads":          8,
@@ -431,19 +431,23 @@ def send_market_order(symbol: str, direction: str, lot: float, magic: int) -> bo
         "magic": magic,
         "comment": "ScalpEx200_v2",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_FOK,
     }
 
-    result = mt5.order_send(request)
-    if result is None:
-        log.error(f"❌ order_send None: {mt5.last_error()}")
-        return False
-    if result.retcode != mt5.TRADE_RETCODE_DONE:
-        log.error(f"❌ Lệnh từ chối: {result.retcode} — {result.comment}")
-        return False
+    # Thử lần lượt các chế độ khớp lệnh để chống lỗi 10030
+    for filling in [mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN]:
+        request["type_filling"] = filling
+        result = mt5.order_send(request)
+        if result is None:
+            continue
+        if result.retcode == mt5.TRADE_RETCODE_DONE:
+            log.info(f"✅ {direction} {lot} lot @ {result.price:.2f} (#{result.order})")
+            return True
+        if result.retcode != 10030:
+            log.error(f"❌ Lệnh từ chối: {result.retcode} — {result.comment}")
+            return False
 
-    log.info(f"✅ {direction} {lot} lot @ {result.price:.2f} (#{result.order})")
-    return True
+    log.error("❌ Lệnh từ chối: 10030 — Unsupported filling mode cho tất cả các chế độ.")
+    return False
 
 
 def close_position(position, symbol: str) -> float:
@@ -468,15 +472,23 @@ def close_position(position, symbol: str) -> float:
         "magic": position.magic,
         "comment": "ScalpEx200_Close",
         "type_time": mt5.ORDER_TIME_GTC,
-        "type_filling": mt5.ORDER_FILLING_FOK,
     }
 
-    result = mt5.order_send(request)
-    if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
-        log.error(f"❌ Đóng lệnh thất bại: {result}")
-        return 0.0
+    pnl = 0.0
+    for filling in [mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN]:
+        request["type_filling"] = filling
+        result = mt5.order_send(request)
+        if result is None:
+            continue
+        if result.retcode == mt5.TRADE_RETCODE_DONE:
+            pnl = position.profit
+            return pnl
+        if result.retcode != 10030:
+            log.error(f"❌ Đóng lệnh thất bại: {result}")
+            return 0.0
 
-    pnl = position.profit
+    log.error("❌ Đóng lệnh thất bại: 10030 — Unsupported filling mode cho tất cả các chế độ.")
+    return 0.0
     direction = "BUY" if position.type == mt5.ORDER_TYPE_BUY else "SELL"
     log.info(f"🔒 Đóng {direction} @ {result.price:.2f} | PnL: ${pnl:+.2f}")
     return pnl
