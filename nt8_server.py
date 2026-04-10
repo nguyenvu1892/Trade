@@ -2,8 +2,8 @@ import pandas as pd
 import numpy as np
 import torch
 from collections import deque
-import nt8_bridge_pb2 as pb2
-import nt8_bridge_pb2_grpc as pb2_grpc
+from protos import nt8_bridge_pb2 as pb2
+from protos import nt8_bridge_pb2_grpc as pb2_grpc
 import grpc
 from concurrent import futures
 import sys
