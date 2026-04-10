@@ -62,6 +62,9 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
                 csv.writer(f).writerow(['datetime','open','high','low','close','tick_volume'])
             log.info(f"📦 Data Collector: Tạo file mới {self.data_file}")
         self._candles_saved = 0
+        
+        # Track NT8 position state để phát hiện close từ trailing stop C#
+        self._last_nt8_position = 0
     
     def EvaluateCandle(self, request, context):
         new_candle = {
@@ -114,6 +117,28 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
                 log.info(f"⏩ Historical fast-forward: {len(self.candles_buffer)} nến (skip inference)")
             return pb2.ActionResponse(action=pb2.ActionResponse.HOLD, confidence=0.0, message="Historical Skip")
         
+        # --- PHÁT HIỆN NT8 CLOSE ĐỘC LẬP (trailing stop, SL, v.v.) ---
+        current_nt8_pos = request.current_position  # 1=Long, -1=Short, 0=Flat
+        if self._last_nt8_position != 0 and current_nt8_pos == 0:
+            log.info(f"🔴 NT8 đã CLOSE lệnh (position {self._last_nt8_position} → 0). Đồng bộ sang Exness!")
+            self._last_nt8_position = 0
+            # Ghi CLOSE_ALL vào JSON cho Exness
+            close_signal = {
+                "timestamp": pd.Timestamp.now(tz='UTC').isoformat(),
+                "candle_time": new_candle['datetime'].isoformat(),
+                "close_price": request.close,
+                "action_id": 0,
+                "action_name": "CLOSE_ALL",
+                "confidence": 1.0,
+                "probs": {"HOLD": 1.0, "BUY": 0.0, "SELL": 0.0}
+            }
+            try:
+                with open(Path("logs/nt8_signal.json"), "w", encoding="utf-8") as f:
+                    json.dump(close_signal, f, indent=2)
+            except: pass
+            return pb2.ActionResponse(action=pb2.ActionResponse.CLOSE_ALL, confidence=1.0, message="NT8 Position Closed")
+        self._last_nt8_position = current_nt8_pos
+        
         # --- MODEL INFERENCE (chỉ cho nến Realtime) ---
         df = pd.DataFrame(list(self.candles_buffer))
         df.set_index('datetime', inplace=True)
@@ -153,13 +178,22 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
         elif action_idx == 2 and confidence >= 0.45:
             pb_action = pb2.ActionResponse.SELL
 
-        # --- SIGNAL BRIDGE TO EXNESS ---
+        # --- SIGNAL BRIDGE TO EXNESS (dùng action ĐÃ LỌC, không dùng raw) ---
+        # Map pb_action sang action_id cho Exness
+        filtered_action_map = {
+            pb2.ActionResponse.HOLD: (0, "HOLD"),
+            pb2.ActionResponse.CLOSE_ALL: (0, "CLOSE_ALL"),
+            pb2.ActionResponse.BUY: (1, "BUY"),
+            pb2.ActionResponse.SELL: (2, "SELL"),
+        }
+        filtered_id, filtered_name = filtered_action_map.get(pb_action, (0, "HOLD"))
+        
         signal_data = {
             "timestamp": pd.Timestamp.now(tz='UTC').isoformat(),
             "candle_time": new_candle['datetime'].isoformat(),
             "close_price": request.close,
-            "action_id": action_idx,
-            "action_name": str(action_names.get(action_idx)),
+            "action_id": filtered_id,
+            "action_name": filtered_name,
             "confidence": confidence,
             "probs": {
                 "HOLD": float(probs[0]),
