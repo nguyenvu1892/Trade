@@ -246,6 +246,13 @@ class SignalBridge:
     def __init__(self, filepath="logs/nt8_signal.json"):
         self.filepath = Path(filepath)
         self.last_ts = None
+        # Đọc timestamp hiện tại để bỏ qua signal cũ từ phiên trước
+        if self.filepath.exists():
+            try:
+                with open(self.filepath, "r", encoding="utf-8") as f: data = json.load(f)
+                self.last_ts = data.get("timestamp")
+                log.info(f"📋 Signal Bridge: Bỏ qua signal cũ (ts={self.last_ts})")
+            except: pass
 
     def get_signal(self):
         if not self.filepath.exists(): return None
