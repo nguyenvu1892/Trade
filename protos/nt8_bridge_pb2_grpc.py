@@ -3,7 +3,7 @@
 import grpc
 import warnings
 
-import nt8_bridge_pb2 as nt8__bridge__pb2
+from protos import nt8_bridge_pb2 as nt8__bridge__pb2
 
 GRPC_GENERATED_VERSION = '1.80.0'
 GRPC_VERSION = grpc.__version__
