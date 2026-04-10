@@ -66,14 +66,29 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
             )
             
         if len(self.candles_buffer) == self.required_bars:
-            log.info(f"✅ HOÀN TẤT WARMUP: Đã nhận đủ {self.required_bars} nến. Chờ dữ liệu Live!")
-            # Trả về hold cho ngay nến kết thúc warmup (vẫn là historical bar thường)
+            log.info(f"✅ HOÀN TẤT WARMUP: Đã nhận đủ {self.required_bars} nến.")
+            self._warmup_done = True
             return pb2.ActionResponse(action=pb2.ActionResponse.HOLD, confidence=0.0, message="Warmup Complete")
             
-        # --- MODEL INFERENCE ---
+        # --- Chỉ chạy inference cho nến REALTIME (không chạy cho historical) ---
+        # Phát hiện historical burst: nến đến < 1s kể từ nến trước = historical
+        import time
+        now = time.time()
+        if not hasattr(self, '_last_candle_time'):
+            self._last_candle_time = now
+        
+        time_gap = now - self._last_candle_time
+        self._last_candle_time = now
+        
+        if time_gap < 1.0:
+            # Nến đến quá nhanh = historical replay, chỉ buffer, không inference
+            if len(self.candles_buffer) % 100 == 0:
+                log.info(f"⏩ Historical fast-forward: {len(self.candles_buffer)} nến (skip inference)")
+            return pb2.ActionResponse(action=pb2.ActionResponse.HOLD, confidence=0.0, message="Historical Skip")
+        
+        # --- MODEL INFERENCE (chỉ cho nến Realtime) ---
         df = pd.DataFrame(list(self.candles_buffer))
         df.set_index('datetime', inplace=True)
-        # Sửa lỗi timezone: DataProcessor mặc định cần timezone UTC
         if df.index.tz is None:
             df.index = df.index.tz_localize('UTC')
         
