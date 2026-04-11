@@ -30,7 +30,7 @@ class Oracle:
         self,
         tp_atr_mult:   float = 1.5,
         sl_atr_mult:   float = 1.0,
-        max_hold_bars: int   = 48,   # 12 giờ với M15
+        max_hold_bars: int   = 24,   # 2 giờ với M5
         spread_pips:   int   = 25,
         commission_usd: float = 0.07,
         lot_size:      float = 0.01,
@@ -119,6 +119,22 @@ class Oracle:
 
         for i in range(n - self.max_hold_bars):
             labels[i] = self._label_one(i, close, high, low, atr_v)
+
+        # In diagnostic tracking metric
+        total = len(labels)
+        holds = (labels == 0).sum()
+        buys = (labels == 1).sum()
+        sells = (labels == 2).sum()
+        print(f"--- ORACLE LABEL DISTRIBUTION ---")
+        print(f"Total: {total}")
+        print(f"HOLD: {holds} ({holds/total*100:.2f}%)")
+        print(f"BUY: {buys} ({buys/total*100:.2f}%)")
+        print(f"SELL: {sells} ({sells/total*100:.2f}%)")
+        buy_sell_ratio = (buys + sells) / total * 100
+        print(f"Valid Action Ratio: {buy_sell_ratio:.2f}%")
+        
+        if buy_sell_ratio < 2.0:
+            print("WARNING: Buy/Sell ratio is below 2%. Tuning Oracle params advised.")
 
         # Các nến cuối không đủ lookforward → HOLD (đã là 0 mặc định)
         return pd.Series(labels, index=df.index, name="label", dtype=np.int8)

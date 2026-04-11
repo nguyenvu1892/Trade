@@ -53,9 +53,40 @@ class DataProcessor:
             # Cap [-0.05, 0.05] — tương đương 5% mỗi nến, đủ bắt GAP mà không gây outlier
             result[f"log_{col}"] = raw_log.clip(-0.05, 0.05)
 
-        # Volume: log(vol_t / vol_{t-1}), clip để tránh log(0)
-        vol = df["tick_volume"].clip(lower=1)
-        result["log_volume"] = np.log(vol / vol.shift(1)).clip(-3.0, 3.0)
+        # --- Giữ nguyên log_tick_volume cũ để duy trì 13 features gốc ---
+        result["log_tick_volume"] = np.log(df["tick_volume"] + 1.0).astype(np.float32)
+
+        # --- Bypass tính VWAP/Surge nếu chạy Live (đã nhận từ C# gRPC) ---
+        if "vwap_distance" in df.columns and "volume_surge" in df.columns:
+            result["volume_surge"] = df["volume_surge"].astype(np.float32)
+            result["vwap_distance"] = df["vwap_distance"].astype(np.float32)
+        else:
+            # ── Volume Surge (Thay thế log_volume cũ) ─────────────────────
+            epsilon = 1e-8
+            vol = df["tick_volume"]
+            vol_mean = vol.rolling(20, min_periods=1).mean()
+            result["volume_surge"] = np.log((vol + epsilon) / (vol_mean + epsilon)).clip(-5.0, 5.0).astype(np.float32)
+
+            # ── CME VWAP Distance (Reset theo phiên Globex US/Eastern) ────
+            # Chuyển index sang múi giờ New York để tính đúng giờ mùa Đông/Hè (DST)
+            df_est = df.copy()
+            df_est.index = df_est.index.tz_convert('US/Eastern')
+            
+            # Phiên Globex mới bắt đầu từ 18:00 EST. 
+            # Nến từ 18:00 trở đi sẽ được tính vào Session Date của ngày hôm sau.
+            session_date = df_est.index.date
+            mask_after_18 = df_est.index.hour >= 18
+            session_date = session_date + pd.to_timedelta(mask_after_18.astype(int), unit='D')
+            
+            typical_price = (df_est["high"] + df_est["low"] + df_est["close"]) / 3.0
+            cv = df_est["tick_volume"].groupby(session_date).cumsum()
+            ctpv = (typical_price * df_est["tick_volume"]).groupby(session_date).cumsum()
+            
+            vwap = ctpv / cv
+            vwap = vwap.fillna(df_est["close"]) # Tránh chia 0
+            
+            # Gắn lại đúng index UTC cũ cho result
+            result["vwap_distance"] = ((df_est["close"] - vwap) / vwap).values.astype(np.float32)
 
         # ── ATR chuẩn hóa ×1000 (tránh gradient vanishing) ──────────
         # ATR/price ≈ 0.001 → quá nhỏ cho Transformer → scale ×1000 → ~1.0
@@ -89,5 +120,17 @@ class DataProcessor:
 
         # ── Bỏ warmup rows (NaN do rolling/shift) ─────────────────────
         result = result.dropna()
+
+        # ── Sắp xếp lại cột TUYỆT ĐỐI TUÂN THỦ KIẾN TRÚC GỐC ──────────
+        # Đảm bảo 13 features gốc đứng đầu tiên để Network Surgery map đúng Weight
+        legacy_columns = [
+            "is_gap", "log_open", "log_high", "log_low", "log_close", "log_tick_volume",
+            "atr_norm", "hour_sin", "hour_cos", "dow_sin", "dow_cos", 
+            "is_us_session", "is_weekend"
+        ]
+        new_columns = ["volume_surge", "vwap_distance"]
+        
+        # Bê nguyên xi output với 15 cột chuẩn
+        result = result[legacy_columns + new_columns]
 
         return result

@@ -1,14 +1,15 @@
 """
-live_bot.py — Master-Slave Exness Sync Bot v3
+live_bot.py — Autonomous Exness MT5 Bot
 =======================================================
-Vận hành dựa trên tín hiệu gRPC từ NinjaTrader (Master) xuất ra qua JSON.
-Không còn chạy Pytorch bên trong tiến trình này để giảm thiểu delay.
+Vận hành NHẬN TÍN HIỆU ĐỘC LẬP từ lõi AI qua JSON.
+Không chạy Pytorch bên trong tiền trình, chỉ làm nhiệm vụ
+vào lệnh, theo dõi SL/TP và Trailing Stop độc lập.
 
 Tính năng:
   - Trailing Stop: Độc lập
   - Circuit Breaker: Độc lập
   - Lot Sizing (Kelly): Độc lập
-  - AI Inference: Đọc từ nt8_signal.json
+  - AI Inference: Đọc từ ai_signal.json
 """
 
 import sys
@@ -27,7 +28,7 @@ import MetaTrader5 as mt5
 CONFIG = {
     "symbol": "XAUUSD",
     "magic_number": 200500,
-    "confidence_min": 0.45,
+    "confidence_min": 0.40,
     "trailing_activate_atr": 1.5,
     "trailing_distance_atr": 0.5,
     "trailing_check_interval": 1, 
@@ -41,6 +42,9 @@ CONFIG = {
     "daily_loss_pct": 15.0,
     "max_dd_pct": 30.0,
     "max_consec_loss": 10,
+    "tp_atr_mult": 1.5,
+    "sl_atr_mult": 1.0,
+    "max_hold_minutes": 120,
 }
 
 LOG_DIR = Path("logs")
@@ -243,7 +247,7 @@ def close_and_log(position, symbol, trade_count, total_pnl, entry_time, entry_eq
     return trade_count, total_pnl
 
 class SignalBridge:
-    def __init__(self, filepath="logs/nt8_signal.json"):
+    def __init__(self, filepath="logs/ai_signal.json"):
         self.filepath = Path(filepath)
         self.last_ts = None
         # Đọc timestamp hiện tại để bỏ qua signal cũ từ phiên trước
@@ -297,6 +301,31 @@ def main():
                     trade_count, total_pnl = close_and_log(position, CONFIG["symbol"], trade_count, total_pnl, entry_time, entry_equity, entry_confidence, cb, "TRAILING_STOP", current_lot)
                     trailing.active = False; position = None
 
+            # --- VIRTUAL STOP LOSS / TAKE PROFIT / TIME STOP (ORACLE REPLICA) ---
+            if position:
+                pos_dir = "BUY" if position.type == mt5.ORDER_TYPE_BUY else "SELL"
+                price = get_current_price(CONFIG["symbol"], pos_dir)
+                
+                entry_price = position.price_open
+                duration_mins = (datetime.now(timezone.utc) - entry_time).total_seconds() / 60 if entry_time else 0
+                
+                tp_dist = current_atr * CONFIG["tp_atr_mult"]
+                sl_dist = current_atr * CONFIG["sl_atr_mult"]
+                
+                is_hit_tp = (pos_dir == "BUY" and price >= entry_price + tp_dist) or (pos_dir == "SELL" and price <= entry_price - tp_dist)
+                is_hit_sl = (pos_dir == "BUY" and price <= entry_price - sl_dist) or (pos_dir == "SELL" and price >= entry_price + sl_dist)
+                is_timeout = duration_mins >= CONFIG["max_hold_minutes"]
+                
+                if is_hit_tp:
+                    trade_count, total_pnl = close_and_log(position, CONFIG["symbol"], trade_count, total_pnl, entry_time, entry_equity, entry_confidence, cb, "TAKE_PROFIT", current_lot)
+                    trailing.active = False; position = None
+                elif is_hit_sl:
+                    trade_count, total_pnl = close_and_log(position, CONFIG["symbol"], trade_count, total_pnl, entry_time, entry_equity, entry_confidence, cb, "STOP_LOSS", current_lot)
+                    trailing.active = False; position = None
+                elif is_timeout:
+                    trade_count, total_pnl = close_and_log(position, CONFIG["symbol"], trade_count, total_pnl, entry_time, entry_equity, entry_confidence, cb, "TIME_STOP", current_lot)
+                    trailing.active = False; position = None
+
             if not cb.is_safe(get_equity()): break
 
             # --- SIGNAL PIPELINE ---
@@ -313,8 +342,9 @@ def main():
                 if position is not None:
                     pos_dir = "BUY" if position.type == mt5.ORDER_TYPE_BUY else "SELL"
                     need_close, close_reason = False, ""
-                    if action == 0: need_close, close_reason = True, "BOT_CLOSE"
-                    elif (pos_dir == "BUY" and action == 2) or (pos_dir == "SELL" and action == 1):
+                    
+                    # HOLD (action == 0) không làm đóng lệnh. Exness hoàn toàn tự trị qua SL / Trailing Stop nội bộ.
+                    if (pos_dir == "BUY" and action == 2) or (pos_dir == "SELL" and action == 1):
                         need_close, close_reason = True, "REVERSAL"
 
                     if need_close:

@@ -8,6 +8,8 @@ using System.Threading.Tasks;
 using System;
 using Nt8Bridge; // Namespace created by protoc
 using Grpc.Core; // Chua cac object Channel, ChannelCredentials
+using System.Collections.Generic;
+using System.Linq;
 
 namespace NinjaTrader.NinjaScript.Strategies
 {
@@ -22,7 +24,10 @@ namespace NinjaTrader.NinjaScript.Strategies
         // === QUAN TRI RUI RO TUNG LENH ===
         public double RiskPerTradePercent { get; set; } = 0.3;  // 0.3% = $150/lenh
         public int MaxConcurrentTrades { get; set; } = 2;       // Max 2 vi the cung luc
-        public int StopLossTicks { get; set; } = 150;           // $150 / $1.00 tick = 150 ticks MGC
+        public int StopLossTicks { get; set; } = 150;           // (Fallback) $150 / $1.00 tick = 150 ticks MGC
+        public double SLAtrMultiplier { get; set; } = 1.0;
+        public int MinStopLossTicks { get; set; } = 20;
+        public int MaxQuantity { get; set; } = 10;
         
         // === TRAILING STOP (Clone tu Exness live_bot.py) ===
         public double TrailingActivateATR { get; set; } = 1.5;  // Kich hoat khi lai > 1.5 ATR
@@ -33,6 +38,11 @@ namespace NinjaTrader.NinjaScript.Strategies
         private StrategyBrain.StrategyBrainClient grpcClient;
         private Channel channel;
         private ATR atrIndicator;
+        
+        // --- CUSTOM INDICATORS FOR AI ---
+        private double cumVolume = 0;
+        private double cumTypicalPriceVol = 0;
+        private Queue<double> volQueue = new Queue<double>();
         
         protected override void OnStateChange() {
             if (State == State.SetDefaults) {
@@ -102,9 +112,10 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
             }
             
-            // PROP FIRM CUT-OFF: 3:55 PM EST
-            if (EnforceCutoffTime && ToTime(Time[0]) >= 155500 && ToTime(Time[0]) <= 160000) {
-                Print("CUT-OFF 3:55 PM. Going Flat!");
+            // CUTOFF: Dong tat ca lenh truoc 4h sang VN (= ~3:50 PM EST / 9:50 PM UTC)
+            // Bao dam khong giu lenh qua dem theo gio Viet Nam
+            if (EnforceCutoffTime && ToTime(Time[0]) >= 155000 && ToTime(Time[0]) <= 160500) {
+                Print("CUT-OFF 3:50 PM EST (= ~4h sang VN). Going Flat!");
                 if (Position.MarketPosition != MarketPosition.Flat) { ExitLong(); ExitShort(); }
                 return;
             }
@@ -136,6 +147,27 @@ namespace NinjaTrader.NinjaScript.Strategies
                 }
             }
             
+            // --- OFFLINE FEATURE ENGINEERING CHO AI ---
+            // 1. VWAP Distance (Reset theo phien CME)
+            if (Bars.IsFirstBarOfSession) {
+                cumVolume = 0;
+                cumTypicalPriceVol = 0;
+            }
+            double typicalPrice = (High[0] + Low[0] + Close[0]) / 3.0;
+            cumVolume += Volume[0];
+            cumTypicalPriceVol += typicalPrice * Volume[0];
+            double currentVwap = cumVolume > 0 ? (cumTypicalPriceVol / cumVolume) : Close[0];
+            double vwapDist = (Close[0] - currentVwap) / currentVwap;
+            
+            // 2. Volume Surge (Chong NaN bang Epsilon 1e-8)
+            volQueue.Enqueue(Volume[0]);
+            if (volQueue.Count > 20) volQueue.Dequeue();
+            double volMean = volQueue.Average();
+            double epsilon = 1e-8;
+            double surge = Math.Log((Volume[0] + epsilon) / (volMean + epsilon));
+            if (surge > 5.0) surge = 5.0;
+            if (surge < -5.0) surge = -5.0;
+            
             var request = new CandleRequest {
                 Time = Time[0].ToString("o"),
                 Open = Open[0],
@@ -145,7 +177,9 @@ namespace NinjaTrader.NinjaScript.Strategies
                 Volume = Volume[0],
                 CurrentPnl = Position.GetUnrealizedProfitLoss(PerformanceUnit.Currency, Close[0]),
                 CurrentPosition = Position.MarketPosition == MarketPosition.Long ? 1 :
-                                  Position.MarketPosition == MarketPosition.Short ? -1 : 0
+                                  Position.MarketPosition == MarketPosition.Short ? -1 : 0,
+                VwapDistance = vwapDist,
+                VolumeSurge = surge
             };
 
             // [LỊCH SỬ] Gửi đồng bộ (Sync)
@@ -161,35 +195,54 @@ namespace NinjaTrader.NinjaScript.Strategies
                 return;
             }
 
-            // [THỜI GIAN THỰC] Gửi bất đồng bộ (Async) để không làm đơ giao diện NinjaTrader chờ AI tính toán
-            Task.Run(async () => {
+            // [THỜI GIAN THỰC] Gửi đồng bộ để đảm bảo EnterLong chạy đúng trên luồng NinjaScript Core.
+            // Vì gọi local gRPC siêu nhanh (~1-5ms) nên không lo đơ UI.
+            if (State == State.Realtime) {
                 try {
-                    var response = await grpcClient.EvaluateCandleAsync(request);
+                    var response = grpcClient.EvaluateCandle(request);
 
-                    Dispatcher.InvokeAsync(() => {
-                        if (State != State.Realtime) return;
+                    if (response.Action == ActionResponse.Types.Action.CloseAll) {
+                        if (Position.MarketPosition == MarketPosition.Long)
+                            ExitLong("AI_Exit", "Entry");
+                        else if (Position.MarketPosition == MarketPosition.Short)
+                            ExitShort("AI_Exit", "Entry");
+                        return;
+                    }
 
-                        if (response.Action == ActionResponse.Types.Action.CloseAll) {
-                            if (Position.MarketPosition == MarketPosition.Long)
-                                ExitLong("AI_Exit", "Entry");
-                            else if (Position.MarketPosition == MarketPosition.Short)
-                                ExitShort("AI_Exit", "Entry");
-                            return;
+                    if (response.Action == ActionResponse.Types.Action.Buy || response.Action == ActionResponse.Types.Action.Sell) {
+                        bool isBuy = response.Action == ActionResponse.Types.Action.Buy;
+                        Print($"ScalpEx200: AI Sent {(isBuy ? "BUY" : "SELL")}! MarketPosition={Position.MarketPosition}, Qty={Position.Quantity}");
+                        
+                        var expectedPosition = isBuy ? MarketPosition.Long : MarketPosition.Short;
+                        if (Position.MarketPosition != expectedPosition && Position.Quantity < MaxConcurrentTrades) {
+                            
+                            // --- DYNAMIC LOT SIZING ---
+                            double atrVal = atrIndicator[0];
+                            double slPriceDist = atrVal * SLAtrMultiplier;
+                            int slTicks = Math.Max(MinStopLossTicks, (int)(slPriceDist / Instrument.MasterInstrument.TickSize));
+                            
+                            double tickValue = Instrument.MasterInstrument.PointValue * Instrument.MasterInstrument.TickSize;
+                            double riskPerContract = slTicks * tickValue;
+                            double riskAmount = AccountSize * (RiskPerTradePercent / 100.0);
+                            
+                            int calculatedQty = riskPerContract > 0 ? (int)Math.Floor(riskAmount / riskPerContract) : 1;
+                            int finalQty = Math.Max(1, Math.Min(MaxQuantity, calculatedQty));
+                            
+                            SetStopLoss("Entry", CalculationMode.Ticks, slTicks, false);
+                            
+                            if (isBuy) {
+                                EnterLong(finalQty, "Entry");
+                                Print($"ScalpEx200: Executed EnterLong with quantity {finalQty}. (SL Ticks: {slTicks})");
+                            } else {
+                                EnterShort(finalQty, "Entry");
+                                Print($"ScalpEx200: Executed EnterShort with quantity {finalQty}. (SL Ticks: {slTicks})");
+                            }
                         }
-
-                        if (response.Action == ActionResponse.Types.Action.Buy) {
-                            if (Position.MarketPosition != MarketPosition.Long && Position.Quantity < MaxConcurrentTrades)
-                                EnterLong("Entry");
-                        }
-                        else if (response.Action == ActionResponse.Types.Action.Sell) {
-                            if (Position.MarketPosition != MarketPosition.Short && Position.Quantity < MaxConcurrentTrades)
-                                EnterShort("Entry");
-                        }
-                    });
+                    }
                 } catch (Exception ex) {
                     Print("Realtime gRPC Eval Error: " + ex.Message);
                 }
-            });
+            }
         }
     }
 }

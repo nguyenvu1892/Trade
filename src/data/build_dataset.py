@@ -119,7 +119,7 @@ def main():
 
     if args.m5:
         run_pipeline(args.m5, "M5", window_size=args.window_size,
-                     max_hold=144)  # 144 nến M5 = 12 giờ
+                     max_hold=24)  # 24 nến M5 = 2 giờ
     if args.m15:
         run_pipeline(args.m15, "M15", window_size=args.window_size,
                      max_hold=48)   # 48 nến M15 = 12 giờ

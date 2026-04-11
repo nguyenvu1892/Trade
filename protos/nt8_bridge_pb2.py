@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10nt8_bridge.proto\x12\tnt8bridge\"\xa4\x01\n\rCandleRequest\x12\x0e\n\x06symbol\x18\x01 \x01(\t\x12\x0c\n\x04open\x18\x02 \x01(\x01\x12\x0c\n\x04high\x18\x03 \x01(\x01\x12\x0b\n\x03low\x18\x04 \x01(\x01\x12\r\n\x05\x63lose\x18\x05 \x01(\x01\x12\x0e\n\x06volume\x18\x06 \x01(\x01\x12\x0c\n\x04time\x18\x07 \x01(\t\x12\x18\n\x10\x63urrent_position\x18\x08 \x01(\x01\x12\x13\n\x0b\x63urrent_pnl\x18\t \x01(\x01\"\x9d\x01\n\x0e\x41\x63tionResponse\x12\x30\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32 .nt8bridge.ActionResponse.Action\x12\x12\n\nconfidence\x18\x02 \x01(\x01\x12\x0f\n\x07message\x18\x03 \x01(\t\"4\n\x06\x41\x63tion\x12\x08\n\x04HOLD\x10\x00\x12\x07\n\x03\x42UY\x10\x01\x12\x08\n\x04SELL\x10\x02\x12\r\n\tCLOSE_ALL\x10\x03\x32X\n\rStrategyBrain\x12G\n\x0e\x45valuateCandle\x12\x18.nt8bridge.CandleRequest\x1a\x19.nt8bridge.ActionResponse\"\x00\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x10nt8_bridge.proto\x12\tnt8bridge\"\xd1\x01\n\rCandleRequest\x12\x0e\n\x06symbol\x18\x01 \x01(\t\x12\x0c\n\x04open\x18\x02 \x01(\x01\x12\x0c\n\x04high\x18\x03 \x01(\x01\x12\x0b\n\x03low\x18\x04 \x01(\x01\x12\r\n\x05\x63lose\x18\x05 \x01(\x01\x12\x0e\n\x06volume\x18\x06 \x01(\x01\x12\x0c\n\x04time\x18\x07 \x01(\t\x12\x18\n\x10\x63urrent_position\x18\x08 \x01(\x01\x12\x13\n\x0b\x63urrent_pnl\x18\t \x01(\x01\x12\x15\n\rvwap_distance\x18\n \x01(\x01\x12\x14\n\x0cvolume_surge\x18\x0b \x01(\x01\"\x9d\x01\n\x0e\x41\x63tionResponse\x12\x30\n\x06\x61\x63tion\x18\x01 \x01(\x0e\x32 .nt8bridge.ActionResponse.Action\x12\x12\n\nconfidence\x18\x02 \x01(\x01\x12\x0f\n\x07message\x18\x03 \x01(\t\"4\n\x06\x41\x63tion\x12\x08\n\x04HOLD\x10\x00\x12\x07\n\x03\x42UY\x10\x01\x12\x08\n\x04SELL\x10\x02\x12\r\n\tCLOSE_ALL\x10\x03\x32X\n\rStrategyBrain\x12G\n\x0e\x45valuateCandle\x12\x18.nt8bridge.CandleRequest\x1a\x19.nt8bridge.ActionResponse\"\x00\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,11 +32,11 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'nt8_bridge_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_CANDLEREQUEST']._serialized_start=32
-  _globals['_CANDLEREQUEST']._serialized_end=196
-  _globals['_ACTIONRESPONSE']._serialized_start=199
-  _globals['_ACTIONRESPONSE']._serialized_end=356
-  _globals['_ACTIONRESPONSE_ACTION']._serialized_start=304
-  _globals['_ACTIONRESPONSE_ACTION']._serialized_end=356
-  _globals['_STRATEGYBRAIN']._serialized_start=358
-  _globals['_STRATEGYBRAIN']._serialized_end=446
+  _globals['_CANDLEREQUEST']._serialized_end=241
+  _globals['_ACTIONRESPONSE']._serialized_start=244
+  _globals['_ACTIONRESPONSE']._serialized_end=401
+  _globals['_ACTIONRESPONSE_ACTION']._serialized_start=349
+  _globals['_ACTIONRESPONSE_ACTION']._serialized_end=401
+  _globals['_STRATEGYBRAIN']._serialized_start=403
+  _globals['_STRATEGYBRAIN']._serialized_end=491
 # @@protoc_insertion_point(module_scope)

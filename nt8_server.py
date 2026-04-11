@@ -29,18 +29,31 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
         
         self.device = torch.device("cpu")
         self.model = XAUTransformer(
-            n_features=13,
+            n_features=15,
             window_size=self.window_size,
             d_model=256,
             n_heads=8,
             n_layers=6,
         ).to(self.device)
         
-        ckpt = torch.load("checkpoints/best_model_bc.pt", map_location=self.device, weights_only=False)
-        if isinstance(ckpt, dict) and "model_state" in ckpt:
-            self.model.load_state_dict(ckpt["model_state"])
-        else:
-            self.model.load_state_dict(ckpt)
+        try:
+            ckpt = torch.load("checkpoints/best_model_cme_sniper_v2.pt", map_location=self.device, weights_only=False)
+            log.info("🧠 Loaded Sniper Model: checkpoints/best_model_cme_sniper_v2.pt")
+            state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt)) if isinstance(ckpt, dict) else ckpt
+        except FileNotFoundError:
+            ckpt = torch.load("checkpoints/best_model_bc.pt", map_location=self.device, weights_only=False)
+            log.warning("⚠️ Sniper model not found! Falling back to best_model_bc.pt and doing live surgery.")
+            state_dict = ckpt.get("model_state", ckpt.get("model_state_dict", ckpt)) if isinstance(ckpt, dict) else ckpt
+            
+            # On-the-fly Network Surgery to prevent crash
+            if "input_projection.weight" in state_dict:
+                old_weight = state_dict["input_projection.weight"]
+                if old_weight.shape[1] == 13:
+                    new_weight = self.model.input_projection.weight.data.clone()
+                    new_weight[:, :13] = old_weight
+                    state_dict["input_projection.weight"] = new_weight
+                    
+        self.model.load_state_dict(state_dict, strict=False)
         self.model.eval()
         
         self.processor = DataProcessor(atr_period=14)
@@ -73,7 +86,9 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
             'high': request.high, 
             'low': request.low, 
             'close': request.close, 
-            'tick_volume': request.volume
+            'tick_volume': request.volume,
+            'vwap_distance': request.vwap_distance if hasattr(request, 'vwap_distance') else 0.0,
+            'volume_surge': request.volume_surge if hasattr(request, 'volume_surge') else 0.0
         }
         self.candles_buffer.append(new_candle)
         
@@ -101,43 +116,30 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
             self._warmup_done = True
             return pb2.ActionResponse(action=pb2.ActionResponse.HOLD, confidence=0.0, message="Warmup Complete")
             
-        # --- Chỉ chạy inference cho nến REALTIME (không chạy cho historical) ---
-        # Phát hiện historical burst: nến đến < 1s kể từ nến trước = historical
-        import time
-        now = time.time()
-        if not hasattr(self, '_last_candle_time'):
-            self._last_candle_time = now
-        
-        time_gap = now - self._last_candle_time
-        self._last_candle_time = now
-        
-        if time_gap < 1.0:
-            # Nến đến quá nhanh = historical replay, chỉ buffer, không inference
+        # --- Phân biệt Nến Historical vs Realtime cực kì an toàn bằng Timestamp Age ---
+        # Nếu nến đang xét (dựa theo request.time) quá cũ (chênh lệch > 5 phút so với giờ hiện tại)
+        # thì chắc chắn nó là nến Historical từ hệ thống Warmup của NinjaTrader.
+        dt_obj_check = getattr(request, 'time', None)
+        is_historical = False
+        if dt_obj_check:
+            try:
+                c_time = pd.to_datetime(dt_obj_check)
+                if c_time.tz is None:
+                    c_time = c_time.tz_localize('UTC')
+                # Nếu nến cũ hơn 10 phút -> Historical
+                if (pd.Timestamp.now(tz='UTC') - c_time).total_seconds() > 600:
+                    is_historical = True
+            except:
+                pass
+                
+        if is_historical:
             if len(self.candles_buffer) % 100 == 0:
-                log.info(f"⏩ Historical fast-forward: {len(self.candles_buffer)} nến (skip inference)")
+                log.info(f"⏩ Historical processing: {len(self.candles_buffer)} nến (skip inference)")
             return pb2.ActionResponse(action=pb2.ActionResponse.HOLD, confidence=0.0, message="Historical Skip")
         
         # --- PHÁT HIỆN NT8 CLOSE ĐỘC LẬP (trailing stop, SL, v.v.) ---
-        current_nt8_pos = request.current_position  # 1=Long, -1=Short, 0=Flat
-        if self._last_nt8_position != 0 and current_nt8_pos == 0:
-            log.info(f"🔴 NT8 đã CLOSE lệnh (position {self._last_nt8_position} → 0). Đồng bộ sang Exness!")
-            self._last_nt8_position = 0
-            # Ghi CLOSE_ALL vào JSON cho Exness
-            close_signal = {
-                "timestamp": pd.Timestamp.now(tz='UTC').isoformat(),
-                "candle_time": new_candle['datetime'].isoformat(),
-                "close_price": request.close,
-                "action_id": 0,
-                "action_name": "CLOSE_ALL",
-                "confidence": 1.0,
-                "probs": {"HOLD": 1.0, "BUY": 0.0, "SELL": 0.0}
-            }
-            try:
-                with open(Path("logs/nt8_signal.json"), "w", encoding="utf-8") as f:
-                    json.dump(close_signal, f, indent=2)
-            except: pass
-            return pb2.ActionResponse(action=pb2.ActionResponse.CLOSE_ALL, confidence=1.0, message="NT8 Position Closed")
-        self._last_nt8_position = current_nt8_pos
+        # Đã xóa: Lõi Python hiện đóng vai trò Provider, không bị động theo dõi lệnh từ NT8.
+        self._last_nt8_position = request.current_position
         
         # --- MODEL INFERENCE (chỉ cho nến Realtime) ---
         df = pd.DataFrame(list(self.candles_buffer))
@@ -165,24 +167,23 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
         action_idx = int(np.argmax(probs))
         confidence = float(probs[action_idx])
         
-        action_names = {0: "CLOSE_ALL", 1: "BUY", 2: "SELL"}
+        action_names = {0: "HOLD", 1: "BUY", 2: "SELL"}
         log.info(f"🟢 [LIVE] Inference Close: {request.close:8.2f} | Out: {action_names.get(action_idx)} ({confidence*100:4.1f}%) | H:{probs[0]*100:3.0f}% B:{probs[1]*100:3.0f}% S:{probs[2]*100:3.0f}%")
 
         # Ánh xạ kết quả sang gRPC Action
         pb_action = pb2.ActionResponse.HOLD
         
         if action_idx == 0:
-            pb_action = pb2.ActionResponse.CLOSE_ALL
-        elif action_idx == 1 and confidence >= 0.45:
+            pb_action = pb2.ActionResponse.HOLD
+        elif action_idx == 1 and confidence >= 0.40:
             pb_action = pb2.ActionResponse.BUY
-        elif action_idx == 2 and confidence >= 0.45:
+        elif action_idx == 2 and confidence >= 0.40:
             pb_action = pb2.ActionResponse.SELL
 
         # --- SIGNAL BRIDGE TO EXNESS (dùng action ĐÃ LỌC, không dùng raw) ---
         # Map pb_action sang action_id cho Exness
         filtered_action_map = {
             pb2.ActionResponse.HOLD: (0, "HOLD"),
-            pb2.ActionResponse.CLOSE_ALL: (0, "CLOSE_ALL"),
             pb2.ActionResponse.BUY: (1, "BUY"),
             pb2.ActionResponse.SELL: (2, "SELL"),
         }
@@ -202,12 +203,11 @@ class StrategyBrainServicer(pb2_grpc.StrategyBrainServicer):
             }
         }
         
-        signal_file = Path("logs/nt8_signal.json")
         try:
-            with open(signal_file, "w", encoding="utf-8") as f:
+            with open(Path("logs/ai_signal.json"), "w", encoding="utf-8") as f:
                 json.dump(signal_data, f, indent=2)
         except Exception as e:
-            log.error(f"❌ Khong the ghi nt8_signal.json: {e}")
+            log.error(f"❌ Failed to write JSON signal: {e}")
 
         return pb2.ActionResponse(
             action=pb_action, 

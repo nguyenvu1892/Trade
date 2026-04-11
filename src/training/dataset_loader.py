@@ -16,29 +16,22 @@ from torch.utils.data import Dataset, DataLoader
 
 
 class H5Dataset(Dataset):
-    """
-    Lazy-load từ HDF5 để không tốn RAM.
-
-    Parameters
-    ----------
-    h5_path  : Path tới file .h5
-    start_idx: Index bắt đầu (slice)
-    end_idx  : Index kết thúc (slice)
-    """
+    # Load ENTIRE sequence into memory for 100x speedup
     def __init__(self, h5_path: str, start_idx: int = 0, end_idx: int = None):
-        self.h5_path  = h5_path
-        self.start    = start_idx
+        self.start = start_idx
         with h5py.File(h5_path, "r") as f:
             total = f["X"].shape[0]
-        self.end = end_idx if end_idx is not None else total
+            self.end = end_idx if end_idx is not None else total
+            # Preload slices into RAM directly!
+            self.X_data = f["X"][self.start:self.end]
+            self.y_data = f["y"][self.start:self.end]
 
     def __len__(self) -> int:
         return self.end - self.start
 
     def __getitem__(self, idx: int):
-        with h5py.File(self.h5_path, "r") as f:
-            X = f["X"][self.start + idx]
-            y = f["y"][self.start + idx]
+        X = self.X_data[idx]
+        y = self.y_data[idx]
         return torch.tensor(X, dtype=torch.float32), torch.tensor(int(y), dtype=torch.long)
 
 

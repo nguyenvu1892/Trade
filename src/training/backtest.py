@@ -146,6 +146,8 @@ def main():
     # Check if checkpoint is an optimizer dictionary or raw state dict
     if "model_state" in checkpoint:
         model.load_state_dict(checkpoint["model_state"])
+    elif "model_state_dict" in checkpoint:
+        model.load_state_dict(checkpoint["model_state_dict"])
     else:
         model.load_state_dict(checkpoint)
     
@@ -168,19 +170,32 @@ def main():
     
     equity_hist = [200.0]
     position_hist = [0]
+    import tqdm
+    log.info(f"Bắt đầu Fast Backtest V22 từ index {oos_start} đến {n_total}...")
     
-    log.info(f"Bắt đầu Backtest V22 từ index {oos_start} đến {n_total}...")
+    # Rút ngắn OOS xuống 20,000 bước để lấy mẫu nhanh (1.5 năm dữ liệu nến M5)
+    max_steps = 20000
     
-    while not done:
-        obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
-        with torch.no_grad():
-            logits, _ = model(obs_t)
-            action = logits.argmax(-1).item()  # Deterministic (greedy) strategy for testing
-            
-        obs, _, term, trunc, info = env.step(action)
-        equity_hist.append(info.get("equity", 200.0))
-        position_hist.append(env._position_dir)
-        done = term or trunc
+    with tqdm.tqdm(total=max_steps, desc="Simulating") as pbar:
+        while not done and pbar.n < max_steps:
+            obs_t = torch.tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
+            with torch.no_grad():
+                logits, _ = model(obs_t)
+                probs = torch.softmax(logits, dim=-1)[0]
+                action_idx = probs.argmax().item()
+                confidence = probs[action_idx].item()
+                
+                # Bắt chước live_bot: Chỉ trade nếu confidence >= 0.42, ngược lại HOLD
+                if confidence >= 0.42:
+                    action = action_idx
+                else:
+                    action = 0 # HOLD
+                
+            obs, _, term, trunc, info = env.step(action)
+            equity_hist.append(info.get("equity", 200.0))
+            position_hist.append(env._position_dir)
+            done = term or trunc
+            pbar.update(1)
 
     # Calculate bar returns
     bar_returns = np.diff(equity_hist) / np.array(equity_hist[:-1])

@@ -15,6 +15,8 @@ message CandleRequest {
     string time = 7;
     double current_position = 8; 
     double current_pnl = 9;
+    double vwap_distance = 10;
+    double volume_surge = 11;
 }
 
 message ActionResponse {
